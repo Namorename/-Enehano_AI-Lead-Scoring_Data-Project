@@ -1,0 +1,19 @@
+# Keep image small + reproducible
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+.git/
+.gitignore
+.idea/
+.vscode/
+*.md
+!README.md
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+*.log
+.DS_Store
+

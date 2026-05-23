@@ -1,0 +1,58 @@
+feature,importance
+Web_Interactions__c,0.2601612090295725
+Time_to_First_Response_h__c,0.1298752955766886
+Days_Since_Last_Activity__c,0.09229756621382992
+LeadSource_Cold Call,0.0621553736602751
+Email_Clicks__c,0.05905525578942157
+NumberOfEmployees,0.05327290702755825
+Annual_Revenue_MCZK__c,0.05223368143292305
+Meetings_Held__c,0.03451779511866122
+Demo_Requested__c,0.02780775976666269
+Email_Opens__c,0.025934580036572317
+Form_Submissions__c,0.025643009295641964
+Email_Open_Rate__c,0.019662127807973908
+Size_Band_Enterprise,0.019241036289956843
+Emails_Sent__c,0.01552296497590652
+LeadSource_Partner,0.015199423056794451
+Days_in_Pipeline__c,0.013312289211716146
+Company_Age_Years,0.011940806031844784
+Industry_Manufacturing,0.008643460516705139
+CZ_NACE_Section_C,0.00822157980928639
+Calls_Made__c,0.005736437001395762
+LinkedIn_Viewed__c,0.005623190534600747
+LeadSource_Event,0.005287801926511377
+Chatbot_Interactions__c,0.005097999769039776
+Proposal_Sent__c,0.00505761394930196
+Size_Band_Small,0.004865182280750361
+LeadSource_Web,0.004511838687500746
+Content_Downloads__c,0.003827387096640349
+"Industry_Professional, Scientific & Technical",0.0026536994506390675
+Region_Hlavní město Praha,0.002448785089585229
+CZ_NACE_Section_M,0.0023538974780341624
+Rating_Warm,0.0021736626864194506
+Rating_Hot,0.0021637701422974045
+Size_Band_Medium,0.0021109426644281715
+Rating_Cold,0.001832970227015528
+Industry_Information & Communication,0.0017547491849777576
+CZ_NACE_Section_J,0.0014197865128421296
+Size_Band_Large,0.0010287006525012197
+Legal_Form_Label_Akciová společnost,0.0008585637692565046
+Region_Jihomoravský kraj,0.0007791297274259267
+Legal_Form_Label_Společnost s ručením omezeným,0.0007337576386906035
+Region_Moravskoslezský kraj,0.0005044103539016615
+Region_Středočeský kraj,0.00045507760777119553
+Region_Zlínský kraj,0.00026680562318509343
+Region_Plzeňský kraj,0.00026579696923912944
+CZ_NACE_Section_K,0.00023360431585664482
+Region_Kraj Vysočina,0.00019861569258380245
+Region_Pardubický kraj,0.00018143013775280342
+Industry_Finance & Insurance,0.00017550446502747052
+Region_Jihočeský kraj,0.00017335379375960154
+Region_Olomoucký kraj,0.0001575464373981215
+Region_Královéhradecký kraj,0.0001433339967246803
+Region_Ústecký kraj,0.00010767174169365856
+Region_Liberecký kraj,9.909955535741874e-05
+Region_Karlovarský kraj,1.0902913610841328e-05
+Legal_Form_Label_Veřejná obchodní společnost,8.859278292355136e-06
+Legal_Form_Label_Společnost komanditní,0.0
+Legal_Form_Label_Družstvo,0.0

@@ -1,0 +1,43 @@
+# Enehano Lead Intelligence — full stack
+# Usage:
+#   docker compose up           # builds image once, starts both services
+#   docker compose up --build   # force rebuild
+#   docker compose down         # stop everything
+#
+# After startup:
+#   • Streamlit dashboard: http://localhost:8501
+#   • Scoring API docs:    http://localhost:8000/docs
+#   • Scoring API health:  http://localhost:8000/health
+
+services:
+
+  # ---------- Streamlit dashboard (business UI) ----------
+  app:
+    build: .
+    image: enehano-leads:latest
+    container_name: enehano-app
+    ports:
+      - "8501:8501"
+    environment:
+      - SCORING_API_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------- FastAPI scoring service (Salesforce integration target) ----------
+  api:
+    build: .
+    image: enehano-leads:latest
+    container_name: enehano-api
+    command: ["uvicorn", "api:app", "--app-dir", "src", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
