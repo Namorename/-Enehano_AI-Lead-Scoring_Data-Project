@@ -178,7 +178,7 @@ def _render_compact_answer(df: pd.DataFrame, intent: nl_query.Intent) -> None:
             f"<div style='display:flex;justify-content:space-between;"
             f"padding:3px 0;font-size:12px'>"
             f"<span style='color:#f4f7fb'>{r.Company_Name[:26]}</span>"
-            f"<b style='color:{ENEHANO_GREEN}'>{int(r.AI_Score)}</b></div>"
+            f"<b style='color:{ENEHANO_GREEN}'>{float(r.AI_Score):.1f}</b></div>"
             for r in top.itertuples()
         )
         st.markdown(

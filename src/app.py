@@ -370,7 +370,7 @@ scored_df     = score_pipeline_via_api(master_df)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def segment_label(score: int) -> tuple[str, str]:
+def segment_label(score: float) -> tuple[str, str]:
     if score >= 70: return "High",   ENEHANO_GREEN
     if score >= 40: return "Medium", WARN
     return "Low", DANGER
@@ -410,7 +410,7 @@ with tab_overview:
     k1.metric("Total leads",      f"{total_leads:,}")
     k2.metric("🔥 High potential", f"{high:,}", delta=f"{high/total_leads:.0%} of all leads")
     k3.metric("Expected wins",    f"{expected_wins:,}")
-    k4.metric("Avg lead quality", f"{avg_score:.0f}/100")
+    k4.metric("Avg lead quality", f"{avg_score:.1f}/100")
 
     st.markdown("### What the data says")
 
@@ -616,7 +616,7 @@ with tab_leads:
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Leads in view",    f"{len(view):,}")
     k2.metric("🔥 High potential", f"{(view['Segment']=='High').sum():,}")
-    k3.metric("Avg AI score",     f"{view['AI_Score'].mean():.0f}" if len(view) else "—")
+    k3.metric("Avg AI score",     f"{view['AI_Score'].mean():.1f}" if len(view) else "—")
     k4.metric("Expected wins",    f"{int((view['Expected_Win_%']/100).sum()):,}")
 
     display_cols = ["IČO", "Company_Name", "Industry", "Region", "LeadSource",
@@ -627,9 +627,9 @@ with tab_leads:
         column_config={
             "Company_Name":   st.column_config.TextColumn("Company"),
             "LeadSource":     st.column_config.TextColumn("Source"),
-            "AI_Score":       st.column_config.ProgressColumn("AI Score",   min_value=0, max_value=100, format="%d"),
+            "AI_Score":       st.column_config.ProgressColumn("AI Score",   min_value=0, max_value=100, format="%.1f"),
             "Rule_Score":     st.column_config.ProgressColumn("Rule Score", min_value=0, max_value=100, format="%d"),
-            "Expected_Win_%": st.column_config.NumberColumn("Expected Win %", format="%d%%"),
+            "Expected_Win_%": st.column_config.NumberColumn("Expected Win %", format="%.1f%%"),
         },
     )
 
@@ -707,7 +707,7 @@ with tab_profile:
             "Rating":                      str(row.get("Rating", "Warm")),
         }
 
-        original_score = int(row["AI_Score"])
+        original_score = float(row["AI_Score"])
 
         if _api_online:
             sim_result = APIClient.score_enrich(str(row["IČO"]), behavioral_override)
@@ -715,16 +715,16 @@ with tab_profile:
             sim_result = None
 
         if sim_result:
-            new_score = sim_result["ai_score"]
+            new_score = float(sim_result["ai_score"])
             seg, color = segment_label(new_score)
-            expected_win = sim_result["expected_win_pct"]
+            expected_win = float(sim_result["expected_win_pct"])
             rule_score   = sim_result["rule_score"]
             api_drivers  = sim_result.get("top_drivers", [])
         else:
             # Graceful fallback when API is offline
             new_score    = original_score
             seg, color   = segment_label(new_score)
-            expected_win = int(row.get("Expected_Win_%", 0))
+            expected_win = float(row.get("Expected_Win_%", 0))
             rule_score   = int(row.get("Rule_Score", 0))
             api_drivers  = list(row.get("top_drivers", []) or [])
 
@@ -734,19 +734,19 @@ with tab_profile:
             st.markdown('<div class="glass-card">', unsafe_allow_html=True)
             diff      = new_score - original_score
             diff_html = (
-                f"<span style='font-size:14px;opacity:.8'>was {original_score}% ({diff:+d})</span>"
-            ) if diff else ""
+                f"<span style='font-size:14px;opacity:.8'>was {original_score:.1f}% ({diff:+.1f})</span>"
+            ) if abs(diff) >= 0.05 else ""
             st.markdown(
                 f"<div class='score-ring' style='border-color:{color};'>"
                 f"AI CONVERSION SCORE<br>"
                 f"<span style='font-size:52px;font-family:Space Grotesk,sans-serif;"
-                f"font-weight:800;color:{color} !important'>{new_score}%</span><br>"
+                f"font-weight:800;color:{color} !important'>{new_score:.1f}%</span><br>"
                 f"<span class='badge' style='background:{color};color:#111 !important;margin-top:8px'>"
                 f"{seg.upper()} POTENTIAL</span><br>{diff_html}</div>",
                 unsafe_allow_html=True,
             )
             st.caption(bh.explain_segment(seg))
-            st.metric("Expected win % (Convert × Win)", f"{expected_win}%")
+            st.metric("Expected win % (Convert × Win)", f"{expected_win:.1f}%")
             st.metric("Rule-based score (baseline)",    f"{rule_score} / 100")
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1022,7 +1022,7 @@ with tab_insights:
             fig = px.bar(top20.sort_values("importance"), x="importance", y="feature",
                          orientation="h", color="importance",
                          color_continuous_scale=[[0, "#444"], [1, ENEHANO_GREEN]],
-                         title="Top 20 features (Random Forest importance)")
+                         title="Top 20 features (Gradient Boosting importance)")
             fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                               font_color="#e0e0e0", coloraxis_showscale=False, height=520,
                               yaxis_title="", xaxis_title="Importance")

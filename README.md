@@ -43,27 +43,30 @@ for any IČO. Hooked into the Lead Profile tab with a 1-hour cache.
 
 | Model | Algorithm | Target | Test AUC | CV AUC (5-fold) | F1 |
 |---|---|---|---|---|---|
-| Conversion | RandomForest (200 trees, depth 12) | `Converted` | **0.892** | 0.892 ± 0.003 | 0.66 |
-| Win | RandomForest (200 trees, depth 12) | `Closed_Won` (on converted only) | 0.714 | 0.740 ± 0.011 | 0.74 |
-| **Baseline** (rules) | Hand-written weighted sum (`baseline.py`) | `Converted` | 0.766 | — | 0.46 |
+| Conversion | GradientBoostingClassifier (balanced sample weights, early stopping) | `Converted` | **0.904** | 0.904 +/- 0.003 | 0.715 |
+| Win | GradientBoostingClassifier (converted leads only) | `Closed_Won` | 0.644 | 0.632 +/- 0.013 | 0.591 |
+| **Baseline** (rules) | Hand-written weighted sum (`baseline.py`) | `Converted` | 0.834 | - | 0.548 |
 
-**AI vs. baseline uplift on the conversion task: +0.126 AUC, +0.20 F1.**
+**AI vs. baseline uplift on the conversion task: +0.070 AUC, +0.167 F1.**
 
 The cross-validation standard deviation (~0.003) shows the model is
-**stable** — performance does not depend on a lucky train/test split.
+**stable** - performance does not depend on a lucky train/test split.
 
-### Top conversion drivers (RandomForest feature importance)
+### Top conversion drivers (Gradient Boosting feature importance)
 
-1. `Web_Interactions` (26 %) — strongest intent signal
-2. `Time_to_First_Response_h` (13 %) — speed kills or makes deals
-3. `Days_Since_Last_Activity` (9 %) — pipeline freshness
-4. `LeadSource = Cold Call` (6 %) — negative driver
-5. `Email_Clicks` (6 %)
-6. `NumberOfEmployees` / `Annual_Revenue` (~5 % each) — company-fit
-7. `Meetings_Held`, `Demo_Requested` — late-funnel commitment
+1. `Days_Since_Last_Activity` (35.8 %) - pipeline freshness
+2. `Days_in_Pipeline` (34.6 %) - maturity / staleness signal
+3. `Rating = Hot` (8.0 %) - strong positive sales qualification
+4. `Rating = Cold` (7.6 %) - strong negative qualification
+5. `Email_Opens` (4.2 %) - engagement signal
+6. `Web_Interactions` (2.1 %) - digital intent
+7. `Meetings_Held`, `Email_Open_Rate`, `Annual_Revenue` - commitment and company-fit
 
 This matches sales intuition, which is the point: the model is
-**explainable**, not a black box.
+**explainable**, not a black box. The API returns `AI_Score` with one decimal
+place, which gives the 30k-lead dataset 985 distinct score values instead of
+visually collapsing many leads into the same integer bucket.
+
 
 ## 4. Architecture
 
@@ -94,8 +97,8 @@ app.py (Streamlit)              # Pipeline · Profile · Performance
 pip install -r requirements.txt
 python src/data_generator.py --res data/res_open_data_sample.csv             # build data/lead_train.csv
 python src/train.py                      # train models → models/*.pkl + metrics.json
-streamlit run src/app.py                 # dashboard  → http://localhost:8501
 uvicorn api:app --app-dir src --port 8000  # scoring API → http://localhost:8000/docs
+python -m streamlit run src/app.py       # dashboard  → http://localhost:8501
 ```
 
 ### Option B — Docker (one command, both services)

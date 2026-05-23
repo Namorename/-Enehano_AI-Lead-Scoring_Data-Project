@@ -41,9 +41,10 @@ import numpy as np
 import pandas as pd
 import shap
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import (
     average_precision_score,
+    brier_score_loss,
     confusion_matrix,
     f1_score,
     precision_score,
@@ -52,6 +53,7 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.utils.class_weight import compute_sample_weight
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PATHS  (resolve relative to this script so it works from any cwd)
@@ -131,14 +133,18 @@ def _build_preprocessor(X: pd.DataFrame) -> Tuple[ColumnTransformer, list, list]
 
 
 def _scores(y_true, y_pred, y_proba) -> dict:
+    score_0_100 = np.asarray(y_proba) * 100
     return {
         "auc_roc":          float(roc_auc_score(y_true, y_proba)),
         "pr_auc":           float(average_precision_score(y_true, y_proba)),
+        "brier":            float(brier_score_loss(y_true, y_proba)),
         "precision":        float(precision_score(y_true, y_pred, zero_division=0)),
         "recall":           float(recall_score(y_true, y_pred, zero_division=0)),
         "f1":               float(f1_score(y_true, y_pred, zero_division=0)),
         "confusion_matrix": confusion_matrix(y_true, y_pred).tolist(),
         "positive_rate":    float(np.mean(y_true)),
+        "unique_scores_int": int(pd.Series(np.round(score_0_100).astype(int)).nunique()),
+        "unique_scores_1dp": int(pd.Series(np.round(score_0_100, 1)).nunique()),
     }
 
 
@@ -151,7 +157,8 @@ def _cross_val_auc(model_factory, pre_factory, X: pd.DataFrame, y: pd.Series) ->
         Xt  = pre.fit_transform(X.iloc[tr])
         Xv  = pre.transform(X.iloc[va])
         m   = model_factory()
-        m.fit(Xt, y.iloc[tr])
+        weights = compute_sample_weight(class_weight="balanced", y=y.iloc[tr])
+        m.fit(Xt, y.iloc[tr], sample_weight=weights)
         aucs.append(roc_auc_score(y.iloc[va], m.predict_proba(Xv)[:, 1]))
     return {
         "auc_mean": float(np.mean(aucs)),
@@ -173,9 +180,16 @@ def _train_one(name: str, X: pd.DataFrame, y: pd.Series) -> dict:
         return pre
 
     def _model_factory():
-        return RandomForestClassifier(
-            n_estimators=200, max_depth=12, min_samples_leaf=20,
-            random_state=42, class_weight="balanced", n_jobs=-1,
+        return GradientBoostingClassifier(
+            n_estimators=180,
+            learning_rate=0.06,
+            max_depth=3,
+            min_samples_leaf=35,
+            subsample=0.85,
+            validation_fraction=0.12,
+            n_iter_no_change=12,
+            tol=1e-4,
+            random_state=42,
         )
 
     cv = _cross_val_auc(_model_factory, _pre_factory, X, y)
@@ -187,12 +201,12 @@ def _train_one(name: str, X: pd.DataFrame, y: pd.Series) -> dict:
     pre, num, cat = _build_preprocessor(Xtr)
     Xtr_p = pre.fit_transform(Xtr)
     Xte_p = pre.transform(Xte)
-    model  = _model_factory().fit(Xtr_p, ytr)
+    train_weights = compute_sample_weight(class_weight="balanced", y=ytr)
+    model  = _model_factory().fit(Xtr_p, ytr, sample_weight=train_weights)
 
-    # Build a SHAP TreeExplainer tied to this model.
-    # RandomForestClassifier uses 'tree_path_dependent' by default, which
-    # requires no background dataset and produces exact Shapley values in
-    # O(depth) per tree — safe and fast enough for real-time API inference.
+    # Build a SHAP TreeExplainer tied to this model. Gradient boosting's
+    # shallow additive trees give smoother scores than a RandomForest vote
+    # average while keeping single-lead explanations fast.
     explainer = shap.TreeExplainer(model)
 
     proba  = model.predict_proba(Xte_p)[:, 1]
@@ -204,6 +218,7 @@ def _train_one(name: str, X: pd.DataFrame, y: pd.Series) -> dict:
     feat_names = num + pre.named_transformers_["cat"].get_feature_names_out(cat).tolist()
 
     return {
+        "algorithm": type(model).__name__,
         "cv": cv, "test": test_m,
         "model": model, "preprocessor": pre, "feature_names": feat_names,
         "explainer": explainer,
@@ -231,7 +246,7 @@ def main() -> None:
         print(f"Error: {DATA_PATH} not found. Run data_generator.py first.")
         return
 
-    df = pd.read_csv(DATA_PATH)
+    df = pd.read_csv(DATA_PATH, dtype={"IČO": str, "IČO": str, "Legal_Form_Code": str})
     print(f"Loaded {len(df):,} rows × {len(df.columns)} columns from {DATA_PATH}")
 
     # ── Build feature matrix (drop all excluded columns) ─────────────────
@@ -282,8 +297,8 @@ def main() -> None:
 
     # ── 6. Metrics JSON ───────────────────────────────────────────────────
     metrics = {
-        "conversion_model":      {"cv": conv["cv"], "test": conv["test"]},
-        "win_model":             {"cv": win["cv"],  "test": win["test"]},
+        "conversion_model":      {"algorithm": conv["algorithm"], "cv": conv["cv"], "test": conv["test"]},
+        "win_model":             {"algorithm": win["algorithm"], "cv": win["cv"],  "test": win["test"]},
         "baseline_conversion":   base_conv,
         "comparison_conversion": {
             "ai_auc":       conv["test"]["auc_roc"],
@@ -308,6 +323,11 @@ def main() -> None:
     print(f"Rule-based base. | AUC: {base_conv['auc_roc']:.4f} | F1: {base_conv['f1']:.4f}")
     print(f"Uplift (AUC):      {metrics['comparison_conversion']['uplift_auc']:+.4f}")
     print(f"Win model        | AUC: {win['test']['auc_roc']:.4f} | F1: {win['test']['f1']:.4f}")
+    print(
+        "Score granularity | "
+        f"{conv['test']['unique_scores_int']} integer buckets, "
+        f"{conv['test']['unique_scores_1dp']} one-decimal buckets"
+    )
     print(f"\nArtifacts written to {MODELS_DIR}/")
 
 

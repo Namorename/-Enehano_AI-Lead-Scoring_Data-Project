@@ -360,10 +360,10 @@ class EnrichLeadInput(BaseModel):
 
 
 class ScoreOutput(BaseModel):
-    ai_score:         int       = Field(..., description="0-100 conversion probability score")
+    ai_score:         float     = Field(..., description="0-100 conversion probability score")
     segment:          str       = Field(..., description="High / Medium / Low")
-    expected_win_pct: int       = Field(..., description="Convert × Win as 0-100")
-    p_win_if_converted_pct: int = Field(..., description="0-100 probability of winning after conversion")
+    expected_win_pct: float     = Field(..., description="Convert × Win as 0-100")
+    p_win_if_converted_pct: float = Field(..., description="0-100 probability of winning after conversion")
     rule_score:       int       = Field(..., description="Baseline rule-based score")
     top_drivers:      list[str] = Field(default_factory=list, description="Top 3 features pushing the score up")
 
@@ -376,7 +376,7 @@ class BatchInput(BaseModel):
 # ── Application ───────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Enehano Lead Scoring API",
-    version="1.1.0",
+    version="1.2.0",
     description=(
         "AI lead scoring for Salesforce. "
         "POST /score for full-field scoring; "
@@ -390,12 +390,34 @@ def _startup() -> None:
     _load_assets()
 
 
-def _segment(score: int) -> str:
+def _segment(score: float) -> str:
     if score >= 70:
         return "High"
     if score >= 40:
         return "Medium"
     return "Low"
+
+
+def _positive_shap_row(shap_values, row_idx: int) -> np.ndarray:
+    """
+    Return the positive-class SHAP vector for one row.
+
+    Different sklearn tree explainers return different shapes:
+    - RandomForestClassifier: (n_rows, n_features, n_classes)
+    - GradientBoostingClassifier: (n_rows, n_features)
+    - Older SHAP versions: list[class] of (n_rows, n_features)
+    """
+    if isinstance(shap_values, list):
+        values = shap_values[1] if len(shap_values) > 1 else shap_values[0]
+        return np.asarray(values)[row_idx]
+
+    values = np.asarray(shap_values)
+    if values.ndim == 3:
+        class_idx = 1 if values.shape[2] > 1 else 0
+        return values[row_idx, :, class_idx]
+    if values.ndim == 2:
+        return values[row_idx]
+    raise ValueError(f"Unsupported SHAP values shape: {values.shape}")
 
 
 def _score_dataframe(df: pd.DataFrame, include_drivers: bool = True) -> list[ScoreOutput]:
@@ -421,11 +443,11 @@ def _score_dataframe(df: pd.DataFrame, include_drivers: bool = True) -> list[Sco
 
     out: list[ScoreOutput] = []
     for i in range(len(df)):
-        ai = int(round(p_conv[i] * 100))
+        ai = round(float(p_conv[i] * 100), 1)
 
         drivers: list[str] = []
         if shap_vals is not None:
-            sv_row = shap_vals[i, :, 1]
+            sv_row = _positive_shap_row(shap_vals, i)
             ranked = list(np.argsort(sv_row)[::-1])
             positive_idx = [j for j in ranked if sv_row[j] > 0]
             remaining = [j for j in ranked if j not in positive_idx]
@@ -435,8 +457,8 @@ def _score_dataframe(df: pd.DataFrame, include_drivers: bool = True) -> list[Sco
         out.append(ScoreOutput(
             ai_score=ai,
             segment=_segment(ai),
-            expected_win_pct=int(round(p_conv[i] * p_win[i] * 100)),
-            p_win_if_converted_pct=int(round(p_win[i] * 100)),
+            expected_win_pct=round(float(p_conv[i] * p_win[i] * 100), 1),
+            p_win_if_converted_pct=round(float(p_win[i] * 100), 1),
             rule_score=int(rule.iloc[i]) if hasattr(rule, "iloc") else int(rule[i]),
             top_drivers=drivers,
         ))
@@ -467,7 +489,6 @@ def score(lead: LeadInput) -> ScoreOutput:
     """Score a single lead using the full LeadInput schema (all fields required)."""
     df = pd.DataFrame([lead.model_dump()])
     return _score_dataframe(df)[0]
-
 
 @app.post("/score/batch", response_model=list[ScoreOutput])
 def score_batch(payload: BatchInput) -> list[ScoreOutput]:

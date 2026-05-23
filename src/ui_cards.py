@@ -44,7 +44,7 @@ def _row_to_card(row: pd.Series) -> dict:
     top_drivers is consumed directly from the API response stored in the
     'top_drivers' column — no local SHAP computation required.
     """
-    score = int(row["AI_Score"])
+    score = round(float(row["AI_Score"]), 1)
 
     if score >= 70:
         color = ENEHANO_GREEN
@@ -76,7 +76,7 @@ def _row_to_card(row: pd.Series) -> dict:
         "color":    color,
         "segment":  str(row.get("Segment", "—")).upper(),
         "drivers":  drivers,
-        "expected": int(row.get("Expected_Win_%", 0)),
+        "expected": round(float(row.get("Expected_Win_%", 0)), 1),
         "rule":     int(row.get("Rule_Score", 0)),
         "emoji":    emoji,
         "action":   action,

@@ -128,8 +128,8 @@ def build_pdf(headline_uplift: float, currency: str,
     rows = [["#", "Company", "Industry", "Region", "AI score", "Win %"]]
     for i, (_, r) in enumerate(top_leads.iterrows(), 1):
         rows.append([str(i), str(r["Company_Name"])[:34], str(r["Industry"])[:18],
-                     str(r["Region"])[:14], f"{int(r['AI_Score'])}",
-                     f"{int(r['Expected_Win_%'])}%"])
+                     str(r["Region"])[:14], f"{float(r['AI_Score']):.1f}",
+                     f"{float(r['Expected_Win_%']):.1f}%"])
     tbl = Table(rows, colWidths=[10 * mm, 60 * mm, 35 * mm, 30 * mm, 20 * mm, 20 * mm])
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), ENEHANO_GREEN),
@@ -147,4 +147,3 @@ def build_pdf(headline_uplift: float, currency: str,
 
     doc.build(story)
     return buf.getvalue()
-
