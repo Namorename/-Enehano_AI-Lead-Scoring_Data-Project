@@ -1,0 +1,5 @@
+{
+  "optimal_win_threshold": 0.35353535353535354,
+  "source": "win_model.threshold_test",
+  "calibrated": true
+}

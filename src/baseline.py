@@ -11,6 +11,8 @@ from __future__ import annotations
  
 import numpy as np
 import pandas as pd
+
+from contracts import score_segment
  
 # Sectors with the strongest historical fit for Salesforce consulting.
 _HIGH_VALUE_SECTORS   = {"J", "M"}
@@ -48,15 +50,44 @@ def score_row(row: pd.Series) -> int:
  
  
 def score_frame(df: pd.DataFrame) -> pd.Series:
-    """Vectorised wrapper around `score_row` for a whole DataFrame."""
-    return df.apply(score_row, axis=1).astype(int)
+    """Return rule-based scores for a whole DataFrame using vectorized rules."""
+    index = df.index
+
+    def _num(name: str, default: float = 0.0) -> pd.Series:
+        if name not in df.columns:
+            return pd.Series(default, index=index, dtype=float)
+        return pd.to_numeric(df[name], errors="coerce")
+
+    def _text(name: str, default: str = "") -> pd.Series:
+        if name not in df.columns:
+            return pd.Series(default, index=index, dtype=object)
+        return df[name].astype(str)
+
+    score = pd.Series(0, index=index, dtype=float)
+
+    ttfr = _num("Time_to_First_Response_h__c", 24)
+    score += np.select([ttfr < 1, ttfr < 6, ttfr < 24], [25, 18, 8], default=0)
+
+    web = _num("Web_Interactions__c", 0)
+    score += np.select([web > 30, web > 10], [20, 10], default=0)
+
+    score += (_num("Meetings_Held__c", 0) > 0).astype(int) * 15
+    score += (_num("Form_Submissions__c", 0) > 0).astype(int) * 8
+    score += (_num("Demo_Requested__c", 0) == 1).astype(int) * 10
+    score += (_num("LinkedIn_Viewed__c", 0) == 1).astype(int) * 4
+
+    section = _text("CZ_NACE_Section")
+    score += section.isin(_HIGH_VALUE_SECTORS).astype(int) * 10
+    score += section.isin(_MEDIUM_VALUE_SECTORS).astype(int) * 5
+
+    score += _text("LeadSource").map(_SOURCE_POINTS).fillna(0)
+
+    return pd.Series(np.clip(score, 0, 100), index=index).astype(int)
  
  
 def segment(score: int) -> str:
     """Map a 0-100 score to a High / Medium / Low segment."""
-    if score >= 70: return "High"
-    if score >= 40: return "Medium"
-    return "Low"
+    return score_segment(score)
  
  
 def predict_proba(df: pd.DataFrame) -> np.ndarray:

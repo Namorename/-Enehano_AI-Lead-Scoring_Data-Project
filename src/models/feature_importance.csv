@@ -1,125 +1,89 @@
 feature,importance
-Days_Since_Last_Activity__c,0.35766733443588633
-Days_in_Pipeline__c,0.3464415217888426
-Rating_Hot,0.08013222188810543
-Rating_Cold,0.07560775414333629
-Email_Opens__c,0.04188787913313479
-Web_Interactions__c,0.020649172884020905
-Meetings_Held__c,0.013521643994116856
-Email_Open_Rate__c,0.00988790080581854
-Annual_Revenue_MCZK__c,0.0072138638069825746
-Time_to_First_Response_h__c,0.006693662556962693
-Form_Submissions__c,0.005267594155741866
-Email_Clicks__c,0.004962358245330285
-Content_Downloads__c,0.004443498695902039
-NumberOfEmployees,0.0028252463501820895
-Calls_Made__c,0.0027067910690985147
-Rating_Warm,0.0018460705815478726
-Chatbot_Interactions__c,0.0016850323619626852
-Founding_Year,0.001484227067259729
-Region_Name_Praha,0.0013341139838060334
-CZ_NACE_Section_Label_Information & Communication,0.0013148010770759606
-CZ_NACE_Section_A,0.0011521290673761426
-CZ_NACE_Section_Label_Agriculture,0.0011450880082979772
-Region_Code_CZ010,0.0010088002048492194
-LeadSource_Referral,0.000852963683195735
-Company_Age_Years,0.0008470683338383003
-Industry_Technology,0.0007633587159549355
-Emails_Sent__c,0.0006373797199468362
-CZ_NACE_Section_Label_Professional & Scientific,0.0006140790881141474
-CZ_NACE_Section_Label_Accommodation & Food,0.00047150171695681947
-Industry_Consulting,0.00047002925880684863
-LeadSource_Partner,0.0004565590814950487
-Industry_Agriculture,0.00039391418584837855
-CZ_NACE_Section_J,0.00038796896083293306
-LeadSource_Event,0.00028639445993648255
-Industry_Hospitality,0.00028291160292320686
-CZ_NACE_Section_M,0.0002768360538310619
-LeadSource_Cold Call,0.0002384426527988104
-Region_Code_CZ053,0.00021564026672463033
-Owner_Jana Procházková,0.00021051122450711657
-CZ_NACE_Section_I,0.0001720156682402132
-CZ_NACE_Section_H,0.00015735761683918051
-CZ_NACE_Section_Label_Other Services,0.00011657134143321108
-CZ_NACE_Section_R,0.000100986290656597
-Owner_Eva Šimánek,9.826400879262431e-05
-Region_Name_Olomoucký,9.019853613554527e-05
-CZ_NACE_Section_F,9.010838746397242e-05
-Owner_Lucie Horáková,8.172191214088447e-05
-CZ_NACE_Section_S,8.097388357769851e-05
-Region_Name_Jihočeský,6.882219005691712e-05
-Region_Code_CZ031,6.542430356395029e-05
-LeadSource_Web,6.33838839581568e-05
-Owner_Martin Novák,5.961771658642115e-05
-LeadSource_LinkedIn,5.721292302703785e-05
-Owner_Pavel Kratochvíl,5.2863693137755605e-05
-Legal_Form_Code_112,5.157203705756047e-05
-CZ_NACE_Section_Label_Administrative & Support,5.123878763384015e-05
-Industry_Transportation,4.759983860376893e-05
-Industry_Retail,4.668020346106531e-05
-Region_Name_Jihomoravský,4.57231857624645e-05
-CZ_NACE_Section_Label_Arts & Entertainment,4.1196224643638676e-05
-CZ_NACE_Section_Label_Transportation,3.974261725190793e-05
-Owner_Tomáš Dvořák,3.645943862702625e-05
-Industry_Entertainment,0.0
-Industry_Energy,0.0
-Industry_Construction,0.0
-Industry_Education,0.0
-CZ_NACE_Section_Label_Water & Waste,0.0
-CZ_NACE_Section_Label_Wholesale & Retail,0.0
-Industry_Manufacturing,0.0
-Industry_Healthcare,0.0
-CZ_NACE_Section_Q,0.0
-CZ_NACE_Section_Label_Construction,0.0
-CZ_NACE_Section_Label_Education,0.0
-CZ_NACE_Section_Label_Electricity & Gas,0.0
-CZ_NACE_Section_Label_Healthcare,0.0
-CZ_NACE_Section_Label_Manufacturing,0.0
-CZ_NACE_Section_N,0.0
-CZ_NACE_Section_P,0.0
-CZ_NACE_Section_C,0.0
+Days_in_Pipeline__c,1.5176336259409182
+Proposal_Sent__c,1.049955090949321
+Days_Since_Last_Activity__c,0.568485767358842
+rating_encoded,0.3341619662322372
+engagement_composite,0.28895794234472705
+Demo_Requested__c,0.2307218287595599
+Time_to_First_Response_h__c,0.1086925187839819
+Email_Open_Rate__c,0.10102703000456797
+Annual_Revenue_MCZK__c,0.10005048527829095
+Web_Interactions__c,0.08882004866590058
+Region_Name_Praha,0.059182702279869735
+activity_density,0.05623602886823931
+rating_x_meetings,0.05411409882177631
+total_calls_and_meets,0.04955179816594206
+CZ_NACE_Section_I,0.04920366783247177
+CZ_NACE_Section_A,0.04452762422064552
+Company_Age_Years,0.04342922814155427
+CZ_NACE_Section_M,0.04000046425277102
+NumberOfEmployees,0.03509477879659616
+CZ_NACE_Section_J,0.02950280122177381
+meet_x_proposal,0.02679278631695623
+LeadSource_Event,0.024800837341182835
+LeadSource_Cold Call,0.024032678056500133
+Emails_Sent__c,0.02283220205781958
+Chatbot_Interactions__c,0.018028204372153897
+created_month,0.017794425258146743
+Calls_Made__c,0.014169293309049738
+Region_Name_Moravskoslezský,0.01382236233498688
+LeadSource_Referral,0.013757123646640716
+CZ_NACE_Section_G,0.013629693971210386
+email_quality,0.010896777645081198
+Content_Downloads__c,0.009906848403937164
+LeadSource_Web,0.009407495086370832
+Form_Submissions__c,0.009044971856394664
+Email_Clicks__c,0.007528429580626991
+CZ_NACE_Section_F,0.006486966216329438
+LeadSource_LinkedIn,0.006370737192109952
+LeadSource_Other,0.006262975804933707
+CZ_NACE_Section_Q,0.0059490428640522125
+Rating_Cold,0.005393940086631239
+CZ_NACE_Section_S,0.005393619181652134
+Region_Name_Liberecký,0.004448873448934515
+created_day_of_week,0.0037362346090041754
+Email_Opens__c,0.003695479601406701
+created_year,0.0032129400284047344
+LinkedIn_Viewed__c,0.0029271526756300334
+Region_Name_Pardubický,0.0027613863528485796
+Meetings_Held__c,0.002296809835583794
+Rating_Warm,0.0022345062098344725
+CZ_NACE_Section_N,0.0021214691117448785
+LeadSource_Partner,0.00211755897161572
+LeadSource_Email Campaign,0.002073816734557802
+Region_Name_Královéhradecký,0.0020737949225445983
+Region_Name_Olomoucký,0.001633316930171967
+Region_Name_Jihomoravský,0.0014034943265115159
+CZ_NACE_Section_L,0.0013105643046104384
+Region_Name_Plzeňský,0.0009830238770911373
+Legal_Form_Code_112,0.0008901891917585114
+Region_Name_Karlovarský,0.0007635985029821356
+CZ_NACE_Section_D,0.0007316406640260763
+Legal_Form_Code_105,0.000686350310817288
+CZ_NACE_Section_C,0.0006734535880353891
+CZ_NACE_Section_P,0.0005635699379383085
+Region_Name_Ústecký,0.00018983665690576216
+CZ_NACE_Section_H,0.00017337326019700838
+created_quarter,0.0
+log1p_ttfr,0.0
+fast_response_flag,0.0
+recency_tier,0.0
+pipeline_maturity,0.0
+meetings_capped,0.0
 CZ_NACE_Section_B,0.0
-CZ_NACE_Section_G,0.0
+CZ_NACE_Section_R,0.0
 CZ_NACE_Section_E,0.0
-CZ_NACE_Section_D,0.0
-CZ_NACE_Section_L,0.0
-CZ_NACE_Section_Label_Mining,0.0
-CZ_NACE_Section_Label_Real Estate,0.0
-Region_Code_CZ032,0.0
-Region_Code_CZ020,0.0
-Industry_Utilities,0.0
-Industry_Mining,0.0
-Industry_Real Estate,0.0
-Industry_Other,0.0
-Region_Name_Plzeňský,0.0
-Region_Name_Pardubický,0.0
-Region_Name_Liberecký,0.0
-Region_Name_Moravskoslezský,0.0
-Region_Name_Královéhradecký,0.0
+log1p_web,0.0
+log1p_revenue,0.0
+log1p_days_since,0.0
 Region_Name_Kraj Vysočina,0.0
-Region_Code_CZ080,0.0
-Region_Name_Karlovarský,0.0
-Region_Code_CZ064,0.0
-Region_Code_CZ063,0.0
-Region_Code_CZ071,0.0
-Region_Code_CZ072,0.0
-Region_Code_CZ041,0.0
-Region_Code_CZ042,0.0
-Region_Code_CZ051,0.0
-Region_Code_CZ052,0.0
+Region_Name_Středočeský,0.0
+Region_Name_Jihočeský,0.0
+Legal_Form_Code_121,0.0
+Region_Name_Zlínský,0.0
 Size_Band_Small,0.0
 Size_Band_Medium,0.0
-Size_Band_Large,0.0
-Size_Band_Enterprise,0.0
-Legal_Form_Label_s.r.o.,0.0
-Legal_Form_Label_v.o.s.,0.0
-Legal_Form_Label_a.s.,0.0
-Legal_Form_Label_Pobočka,0.0
-Region_Name_Zlínský,0.0
 Legal_Form_Code_811,0.0
-Legal_Form_Code_121,0.0
-Legal_Form_Code_105,0.0
-Region_Name_Středočeský,0.0
-Region_Name_Ústecký,0.0
-LeadSource_Email Campaign,0.0
-LeadSource_Other,0.0
+Size_Band_Enterprise,0.0
+Size_Band_Large,0.0
+Rating_Hot,0.0

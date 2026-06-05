@@ -17,6 +17,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from contracts import score_segment
+
 ENEHANO_GREEN = "#a6ce39"
 WARN          = "#ffc107"
 DANGER        = "#ff4b4b"
@@ -46,12 +48,10 @@ def _row_to_card(row: pd.Series) -> dict:
     """
     score = round(float(row["AI_Score"]), 1)
 
-    if score >= 70:
-        color = ENEHANO_GREEN
-    elif score >= 40:
-        color = WARN
-    else:
-        color = DANGER
+    color = {
+        "High": ENEHANO_GREEN,
+        "Medium": WARN,
+    }.get(score_segment(score), DANGER)
 
     # API already computed the SHAP drivers; fall back gracefully if missing.
     raw_drivers = row.get("top_drivers") or []

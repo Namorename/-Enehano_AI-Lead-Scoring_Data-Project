@@ -26,6 +26,7 @@ CONV_EXPL  = MODELS_DIR / "conv_explainer.pkl"
 WIN_MODEL  = MODELS_DIR / "win_model.pkl"
 WIN_PRE    = MODELS_DIR / "win_preprocessor.pkl"
 WIN_EXPL   = MODELS_DIR / "win_explainer.pkl" 
+WIN_THRESHOLD = MODELS_DIR / "win_threshold.json"
 # Reports / metrics
 METRICS_JSON       = MODELS_DIR / "metrics.json"
 FEATURE_IMPORTANCE = MODELS_DIR / "feature_importance.csv"

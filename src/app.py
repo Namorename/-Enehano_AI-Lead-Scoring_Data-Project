@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import business_helpers as bh
 import ui_splash
+from contracts import API_PAYLOAD_EXCLUDE_COLS, add_region_alias, score_segment
 from paths import (
     LEAD_TRAIN, METRICS_JSON, FEATURE_IMPORTANCE, VAL_PREDICTIONS, LOGO_SVG,
 )
@@ -285,9 +286,7 @@ def load_data() -> pd.DataFrame:
     df = pd.read_csv(LEAD_TRAIN, dtype={"IČO": str, "Legal_Form_Code": str})
     df["IČO"] = df["IČO"].str.zfill(8)
     df["Legal_Form_Code"] = df["Legal_Form_Code"].str.strip()
-    if "Region_Name" in df.columns and "Region" not in df.columns:
-        df["Region"] = df["Region_Name"]
-    return df
+    return add_region_alias(df, copy=False)
 
 
 @st.cache_data
@@ -320,15 +319,7 @@ def score_pipeline_via_api(df: pd.DataFrame) -> pd.DataFrame:
         st.stop()
 
     # Build a minimal payload — only the fields the API expects as LeadInput.
-    _EXCLUDE = {
-        "Lead_ID", "IČO", "Company_Name",
-        "Converted", "Closed_Won", "Status",
-        "Conversion_Probability", "Rule_Based_Score", "Rule_Based_Segment",
-        "Win_Probability__c", "IČO_Duplicate_Flag", "CreatedDate", "LastActivityDate",
-        # Alias we added — the API uses Region_Name internally
-        "Region",
-    }
-    api_cols = [c for c in df.columns if c not in _EXCLUDE]
+    api_cols = [c for c in df.columns if c not in API_PAYLOAD_EXCLUDE_COLS]
     leads_payload = df[api_cols].fillna(0).to_dict(orient="records")
 
     results: list[dict] = []
@@ -371,9 +362,8 @@ scored_df     = score_pipeline_via_api(master_df)
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def segment_label(score: float) -> tuple[str, str]:
-    if score >= 70: return "High",   ENEHANO_GREEN
-    if score >= 40: return "Medium", WARN
-    return "Low", DANGER
+    seg = score_segment(score)
+    return seg, {"High": ENEHANO_GREEN, "Medium": WARN}.get(seg, DANGER)
 
 
 # ── Header ────────────────────────────────────────────────────────────────────

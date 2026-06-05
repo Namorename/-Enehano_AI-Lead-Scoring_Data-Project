@@ -10,4 +10,5 @@ fastapi>=0.110
 uvicorn[standard]>=0.27
 pydantic>=2.6
 reportlab>=4.0
-
+lightgbm>=4.0
+optuna>=3.6

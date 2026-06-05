@@ -38,13 +38,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from paths import LEAD_TRAIN, RES_SAMPLE
+
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ──────────────────────────────────────────────────────────────────────────────
 
 SEED        = 42
 N_LEADS     = 30_000
-OUTPUT_FILE = "data/lead_train.csv"
+OUTPUT_FILE = str(LEAD_TRAIN)
 
 # Base win probability for Stage-2 causal model (Opportunity → Closed Deal).
 # All feature contributions are added on top of this intercept before clipping.
@@ -935,8 +937,8 @@ if __name__ == "__main__":
         description="Enehano Solutions — B2B Lead Scoring Dataset Generator"
     )
     parser.add_argument(
-        "--res", type=str, default="res_open_data_sample.csv",
-        help="Path to CZSO RES open-data CSV (default: res_open_data_sample.csv)"
+        "--res", type=str, default=str(RES_SAMPLE),
+        help=f"Path to CZSO RES open-data CSV (default: {RES_SAMPLE})"
     )
     parser.add_argument(
         "--n", type=int, default=N_LEADS,

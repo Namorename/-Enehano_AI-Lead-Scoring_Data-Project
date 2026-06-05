@@ -4,11 +4,15 @@ api.py
 FastAPI scoring service — exposes the trained models over HTTP.
 
 Explainability:
-  Per-lead top_drivers are computed with shap.TreeExplainer (local SHAP
-  values, positive class).  The explainer is loaded from disk once at
-  startup and reused across requests — no background dataset is required
-  for RandomForestClassifier (tree_path_dependent mode).  Expected latency
-  is ~8-15 ms per lead on a typical server CPU.
+  Per-lead top_drivers are computed from the conversion SHAP explainer
+  (local SHAP values, positive class). The explainer is loaded from disk
+  once at startup and reused across requests. Its concrete type depends on
+  the model selected during training (a TreeExplainer for tree backends such
+  as HistGradientBoosting, a LinearExplainer for linear ones); the explainer
+  is built on the *base* estimator while the served probability comes from a
+  CalibratedClassifierCV wrapper, so drivers explain the uncalibrated ranking.
+  Drivers are best-effort: if the explainer is missing or raises, scoring still
+  succeeds and top_drivers is returned empty.
 
 Column contract:
   - LeadInput uses Legal_Form_Label (string), NOT Legal_Form_Code (which is
@@ -46,9 +50,12 @@ from pydantic import BaseModel, Field, field_validator
 
 import ares as ares_client
 import baseline
+from contracts import add_region_alias, score_segment
+from feature_engineering import add_engineered_features
 from paths import (
     CONV_MODEL, CONV_PRE, CONV_FEAT, CONV_EXPL,
     WIN_MODEL, WIN_PRE, WIN_EXPL,
+    WIN_THRESHOLD,
     METRICS_JSON,
 )
 
@@ -57,14 +64,6 @@ ASSETS: dict = {}
 METRICS: dict = {}
 
 MODEL_PATHS = [CONV_MODEL, CONV_PRE, CONV_FEAT, CONV_EXPL, WIN_MODEL, WIN_PRE, WIN_EXPL]
-
-# Columns excluded from training — must match train.py DROP_COLS exactly.
-_API_EXCLUDE = {
-    "Lead_ID", "IČO", "Company_Name",
-    "Converted", "Closed_Won", "Status",
-    "Conversion_Probability", "Rule_Based_Score", "Rule_Based_Segment",
-    "Win_Probability__c", "IČO_Duplicate_Flag", "CreatedDate", "LastActivityDate",
-}
 
 
 def _load_assets() -> None:
@@ -81,6 +80,11 @@ def _load_assets() -> None:
     ASSETS["win_model"]  = joblib.load(WIN_MODEL)
     ASSETS["win_pre"]    = joblib.load(WIN_PRE)
     ASSETS["win_expl"]   = joblib.load(WIN_EXPL)
+    if WIN_THRESHOLD.exists():
+        threshold_payload = json.loads(WIN_THRESHOLD.read_text())
+        ASSETS["optimal_win_threshold"] = float(
+            threshold_payload.get("optimal_win_threshold", 0.5)
+        )
     if METRICS_JSON.exists():
         METRICS.update(json.loads(METRICS_JSON.read_text()))
 
@@ -391,11 +395,7 @@ def _startup() -> None:
 
 
 def _segment(score: float) -> str:
-    if score >= 70:
-        return "High"
-    if score >= 40:
-        return "Medium"
-    return "Low"
+    return score_segment(score)
 
 
 def _positive_shap_row(shap_values, row_idx: int) -> np.ndarray:
@@ -421,29 +421,46 @@ def _positive_shap_row(shap_values, row_idx: int) -> np.ndarray:
 
 
 def _score_dataframe(df: pd.DataFrame, include_drivers: bool = True) -> list[ScoreOutput]:
-    # Add 'Region' alias so baseline.score_frame and any region-aware logic work.
-    if "Region_Name" in df.columns and "Region" not in df.columns:
-        df = df.copy()
-        df["Region"] = df["Region_Name"]
+    # An empty frame has no columns, so the fitted ColumnTransformer would raise
+    # "columns are missing" instead of returning an empty result. Short-circuit
+    # before touching the preprocessor so callers get a clean [] for [] in.
+    if len(df) == 0:
+        return []
 
-    p_conv = ASSETS["conv_model"].predict_proba(ASSETS["conv_pre"].transform(df))[:, 1]
-    p_win  = ASSETS["win_model"].predict_proba(ASSETS["win_pre"].transform(df))[:, 1]
+    # Add 'Region' alias so baseline.score_frame and any region-aware logic work.
+    df = add_region_alias(df)
+    add_engineered_features(df)
+
+    X_conv = ASSETS["conv_pre"].transform(df)
+    X_win = ASSETS["win_pre"].transform(df)
+    p_conv = ASSETS["conv_model"].predict_proba(X_conv)[:, 1]
+    p_win  = ASSETS["win_model"].predict_proba(X_win)[:, 1]
     rule   = baseline.score_frame(df)
 
     shap_vals = None
     feat_names = ASSETS["feat_names"]
-    if include_drivers:
+    explainer = ASSETS.get("conv_expl")
+    if include_drivers and explainer is not None:
         # Local SHAP explanations are intentionally optional. They are useful
         # for a single lead profile, but too expensive for 30k-row dashboard
         # scoring where only numeric ranking fields are needed.
-        X_transformed = ASSETS["conv_pre"].transform(df)
-        shap_vals = ASSETS["conv_expl"].shap_values(
-            X_transformed, check_additivity=False
-        )
+        #
+        # The explainer is a TreeExplainer tied to the *base* estimator, while
+        # the served probabilities come from the calibrated wrapper. SHAP also
+        # has version-sensitive support for some tree backends (e.g.
+        # HistGradientBoosting). Neither should be able to fail the whole
+        # scoring request — drivers are a nice-to-have, the score is not — so we
+        # degrade to "no drivers" on any explainer error.
+        try:
+            shap_vals = explainer.shap_values(X_conv, check_additivity=False)
+        except Exception as exc:  # noqa: BLE001 - drivers are best-effort
+            print(f"[WARN] SHAP driver computation failed, returning scores "
+                  f"without drivers: {type(exc).__name__}: {exc}")
+            shap_vals = None
 
     out: list[ScoreOutput] = []
     for i in range(len(df)):
-        ai = round(float(p_conv[i] * 100), 1)
+        ai = int(np.clip(round(float(p_conv[i] * 100)), 0, 100))
 
         drivers: list[str] = []
         if shap_vals is not None:
@@ -493,6 +510,8 @@ def score(lead: LeadInput) -> ScoreOutput:
 @app.post("/score/batch", response_model=list[ScoreOutput])
 def score_batch(payload: BatchInput) -> list[ScoreOutput]:
     """Score up to 500 leads in one call using the full LeadInput schema."""
+    if not payload.leads:
+        return []
     if len(payload.leads) > 500:
         raise HTTPException(400, "Maximum 500 leads per batch.")
     df = pd.DataFrame([lead.model_dump() for lead in payload.leads])
