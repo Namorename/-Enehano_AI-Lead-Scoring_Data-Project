@@ -10,6 +10,9 @@ venv/
 # Model artifacts (regenerate via train.py)
 *.pkl
 
+# Runtime logs
+*.log
+
 # IDE
 .idea/
 .vscode/
