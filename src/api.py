@@ -41,11 +41,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import os
+
 import joblib
 import numpy as np
 import pandas as pd
 import shap
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 import ares as ares_client
@@ -58,6 +60,20 @@ from paths import (
     WIN_THRESHOLD,
     METRICS_JSON,
 )
+
+# ── Auth ────────────────────────────────────────────────────────────────────
+# Optional API-key gate for the scoring routes. Salesforce (or any caller) sends
+# the key in the `X-API-Key` header; configure the matching value via the
+# SCORING_API_KEY env var on the host. When the env var is unset the check is a
+# no-op, so local development and in-process use stay frictionless. Set it before
+# exposing the service publicly (see docs/SALESFORCE_INTEGRATION.md §5).
+SCORING_API_KEY = os.getenv("SCORING_API_KEY")
+
+
+def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
+    if SCORING_API_KEY and x_api_key != SCORING_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key.")
+
 
 # ── Asset loading ─────────────────────────────────────────────────────────────
 ASSETS: dict = {}
@@ -501,13 +517,13 @@ def metrics_endpoint() -> dict:
     return METRICS
 
 
-@app.post("/score", response_model=ScoreOutput)
+@app.post("/score", response_model=ScoreOutput, dependencies=[Depends(require_api_key)])
 def score(lead: LeadInput) -> ScoreOutput:
     """Score a single lead using the full LeadInput schema (all fields required)."""
     df = pd.DataFrame([lead.model_dump()])
     return _score_dataframe(df)[0]
 
-@app.post("/score/batch", response_model=list[ScoreOutput])
+@app.post("/score/batch", response_model=list[ScoreOutput], dependencies=[Depends(require_api_key)])
 def score_batch(payload: BatchInput) -> list[ScoreOutput]:
     """Score up to 500 leads in one call using the full LeadInput schema."""
     if not payload.leads:
@@ -518,7 +534,7 @@ def score_batch(payload: BatchInput) -> list[ScoreOutput]:
     return _score_dataframe(df, include_drivers=payload.include_drivers)
 
 
-@app.post("/score/enrich", response_model=ScoreOutput)
+@app.post("/score/enrich", response_model=ScoreOutput, dependencies=[Depends(require_api_key)])
 def score_enrich(payload: EnrichLeadInput) -> ScoreOutput:
     """
     Thick-backend scoring endpoint — the caller supplies only an IČO and
