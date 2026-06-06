@@ -1,8 +1,8 @@
 """
 Feature engineering shared by training and inference.
 
-The function mutates the provided DataFrame in place and returns it so callers
-can use it fluently while avoiding unnecessary copies for batch scoring.
+add_engineered_features modifies the DataFrame in place and also returns it, to
+avoid copying large frames during batch scoring.
 """
 from __future__ import annotations
 

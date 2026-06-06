@@ -1,7 +1,7 @@
 """
 ui_cards_html.py
 ================
-HTML/CSS/JS template for the swipeable lead-card deck — Glassmorphism edition.
+HTML/CSS/JS template for the swipeable lead-card deck - Glassmorphism edition.
 
 Kept separate from `ui_cards.py` so the Streamlit-side data prep stays
 small and the front-end source is easy to read on its own. The Python
@@ -9,8 +9,8 @@ side serialises the cards as JSON and substitutes a single `__CARDS__`
 placeholder; everything else (gestures, animation, rendering) runs in
 the iframe.
 
-Design: full Glassmorphism — backdrop-filter blur, semi-transparent
-surfaces, thin luminous borders, subtle box-shadows — with the Enehano
+Design: full Glassmorphism - backdrop-filter blur, semi-transparent
+surfaces, thin luminous borders, subtle box-shadows - with the Enehano
 Green (#a6ce39) preserved as the primary accent colour.
 """
 from __future__ import annotations
@@ -50,7 +50,7 @@ html, body {
     height: 490px;
 }
 
-/* ── Card surface — Glassmorphism core ── */
+/* ── Card surface - Glassmorphism core ── */
 .card {
     position: absolute;
     inset: 0;
@@ -369,9 +369,9 @@ function buildCard(c) {
         <div class="stamp skip">SKIP</div>
         <div class="top">
           <div style="flex:1;min-width:0">
-            <div class="meta">${escapeHtml(c.industry)} · ${escapeHtml(c.region)}</div>
+            <div class="meta">${escapeHtml(c.industry)} - ${escapeHtml(c.region)}</div>
             <div class="name">${escapeHtml(c.company)}</div>
-            <div class="source">via ${escapeHtml(c.source)} · IČO ${escapeHtml(c.ico)}</div>
+            <div class="source">via ${escapeHtml(c.source)} - IČO ${escapeHtml(c.ico)}</div>
           </div>
           <div class="score-box">
             <div class="score" style="color:${c.color}">${c.score}</div>
@@ -512,9 +512,9 @@ def build_html(cards: list[dict[str, Any]]) -> str:
   <div class="controls">
     <button id="btn-skip" class="btn skip" title="Skip (←)">✕</button>
     <button id="btn-undo" class="btn undo" title="Undo (Backspace)">↶</button>
-    <button id="btn-like" class="btn like" title="Call (→)">✓</button>
+    <button id="btn-like" class="btn like" title="Call (->)">✓</button>
   </div>
-  <div class="hint">Drag the card · ← skip · → call · Backspace undo</div>
+  <div class="hint">Drag the card - ← skip - -> call - Backspace undo</div>
   <script>{js}</script>
 </body>
 </html>"""

@@ -152,9 +152,9 @@ def compute_roi(inputs: ROIInputs, lift_ai: pd.DataFrame, lift_base: pd.DataFram
 # ---------- Plain-language helpers ----------
 def explain_segment(seg: str) -> str:
     return {
-        "High": "Call today — strong intent and good fit.",
-        "Medium": "Worth a touch — nurture with content / quick email.",
-        "Low": "Park or automate — unlikely to convert in this cycle.",
+        "High": "Call today - strong intent and good fit.",
+        "Medium": "Worth a touch - nurture with content / quick email.",
+        "Low": "Park or automate - unlikely to convert in this cycle.",
     }.get(seg, "")
 
 
@@ -165,9 +165,9 @@ def population_stability_index(reference: np.ndarray, current: np.ndarray,
     """Population Stability Index between two score distributions.
 
     Industry rule of thumb:
-      PSI < 0.10 → no significant change ("stable")
-      0.10–0.25 → moderate shift, investigate
-      > 0.25    → major shift, retrain
+      PSI < 0.10 -> no significant change ("stable")
+      0.10-0.25 -> moderate shift, investigate
+      > 0.25    -> major shift, retrain
     """
     ref = np.asarray(reference, dtype=float)
     cur = np.asarray(current, dtype=float)
@@ -186,5 +186,5 @@ def psi_verdict(psi: float) -> tuple[str, str]:
         return "✅ Stable", "#a6ce39"
     if psi < 0.25:
         return "⚠ Moderate shift", "#ffc107"
-    return "🚨 Major drift — retrain", "#ff4b4b"
+    return "🚨 Major drift - retrain", "#ff4b4b"
 

@@ -1,17 +1,13 @@
 """
-sf_common.py
-============
-Shared Salesforce configuration and connection helpers, used by both
-sf_sync.py (scoring sync) and create_test_leads.py (seeder).
+Salesforce connection and shared field config.
 
-Kept separate so the seeder does not have to import the ML stack (`api`), and so
-the connection logic / field config live in exactly one place.
+Used by sf_sync.py and create_test_leads.py. Credentials are read from
+environment variables (a .env file works too):
 
-Env vars (optionally via a .env file — see .env.example):
-  SF_USER, SF_PASS, SF_TOKEN   Salesforce username / password / security token
-  SF_DOMAIN                    'login' (prod/Dev Edition, default) or 'test' (sandbox)
-  SF_ICO_FIELD                 Lead field holding the IČO (default 'ICO__c')
-  SF_BEHAVIORAL_FIELDS         Comma-separated Lead fields to feed the model
+    SF_USER, SF_PASS, SF_TOKEN   login / password / security token
+    SF_DOMAIN                    "login" for prod or Dev Edition, "test" for a sandbox
+    SF_ICO_FIELD                 Lead field that holds the IČO (default ICO__c)
+    SF_BEHAVIORAL_FIELDS         comma-separated Lead fields to feed the model
 """
 from __future__ import annotations
 
@@ -20,11 +16,10 @@ import sys
 
 
 def enable_utf8_stdout() -> None:
-    """Force UTF-8 console output. Czech firmographics (IČO, kraj names) contain
-    non-ASCII characters that crash the default cp1252 Windows console."""
+    """Switch stdout to UTF-8 so Czech names (IČO, kraj) print on a Windows console."""
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:  # noqa: BLE001 - stdout may not be reconfigurable (e.g. piped)
+    except Exception:
         pass
 
 
@@ -37,7 +32,7 @@ def _load_env() -> None:
         pass
 
 
-# Load .env before reading config below, so env-driven field names resolve.
+# Load .env first so the field names below pick up any overrides.
 _load_env()
 
 ICO_FIELD = os.getenv("SF_ICO_FIELD", "ICO__c")
@@ -47,8 +42,7 @@ BEHAVIORAL_FIELDS = [
 
 
 def connect():
-    """Authenticate to Salesforce from env vars. Imported lazily so modules that
-    only need the config constants don't require simple-salesforce installed."""
+    """Log in to Salesforce with the credentials from the environment."""
     from simple_salesforce import Salesforce
 
     missing = [v for v in ("SF_USER", "SF_PASS", "SF_TOKEN") if not os.getenv(v)]

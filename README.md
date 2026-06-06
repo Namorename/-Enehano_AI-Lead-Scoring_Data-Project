@@ -1,247 +1,183 @@
-# Enehano Lead Intelligence Platform
+# Enehano Lead Intelligence
 
-Predictive lead-scoring MVP for **Enehano Solutions** — a Salesforce
-consulting firm. Given a marketing/sales lead, the platform predicts:
+Predictive lead scoring for Enehano Solutions, a Salesforce consulting firm.
+For each lead the project predicts:
 
-1. **P(Convert)** — probability the lead becomes an Opportunity.
-2. **P(Win | Converted)** — probability that Opportunity is Closed Won.
-3. **Expected win % = P(Convert) × P(Win)** — single number used for ranking.
+1. P(Convert) - the chance the lead becomes an Opportunity.
+2. P(Win | Converted) - the chance that Opportunity is Closed Won.
+3. Expected win % = P(Convert) x P(Win) - one number for ranking.
 
-The score is delivered both as a percentage and as a **High / Medium / Low**
-segment, ready to drop into Salesforce as a custom field.
+The score is exposed both as a 0-100 number and as a High/Medium/Low segment,
+ready to drop into Salesforce as a custom field.
 
----
+## 1. The problem
 
-## 1. Business problem
+Enehano prioritises leads with simple rules and rep intuition. It works, but it
+is crude and there is no clear reason why one lead beats another. The question
+this project answers: can a model trained on CRM data plus Czech company data
+rank leads better than a rules sheet, and can we show by how much?
 
-Enehano currently prioritises leads via simple rules and sales-rep intuition.
-This is functional but inefficient: reps spend time on low-fit leads, and
-there is no transparent, data-driven explanation for why a lead is "good".
-
-**The question:** can we use historical CRM data + firmographics from the
-Czech RES register to build a model that prioritises leads better than a
-rule-based scoring sheet? **Answer: yes, and the uplift is measured in
-converters reached per unit of sales effort (see §5), not just AUC.**
+Short answer: yes. Worked top-down by the score, the model reaches roughly twice
+the converters of the deployed rules for the same amount of outreach (details in
+section 4).
 
 ## 2. Data
 
 | Source | Role |
 |---|---|
-| **RES open data** (ČSÚ) | Real Czech companies — IČO, legal form, NACE, region, employee category, founding date |
-| **Synthetic CRM telemetry** | Web visits, response time, emails, meetings, forms, demo, LinkedIn, etc. |
-| **Synthetic outcomes** | `Converted` (Lead → Opportunity) and `Closed_Won` (Opportunity outcome), generated via a noisy logistic model (`N(0, 0.8)` logit noise) so the AI has real signal to learn but cannot trivially memorise a formula |
+| RES open data (ČSÚ) | Real Czech companies: IČO, legal form, NACE, region, employee band, founding date |
+| Simulated CRM telemetry | Web visits, response time, emails, meetings, forms, demos, etc. |
+| Simulated outcomes | `Converted` and `Closed_Won`, generated from a noisy logistic model so there is real signal to learn but no formula to memorise |
 
-**NACE filter.** Only sectors with realistic Salesforce-consulting demand
-are kept: **C** (Manufacturing), **J** (ICT), **K** (Finance & Insurance),
-**M** (Professional services). This shrinks ~90 k RES rows to ~30 k usable
-companies.
+Only sectors with realistic Salesforce-consulting demand are kept: C
+(Manufacturing), J (ICT), K (Finance and Insurance), M (Professional services).
+That trims ~90k RES rows to ~30k usable companies.
 
-**ARES enrichment.** `ares.py` calls the public ARES REST API
-(`ares.gov.cz`) to fetch authoritative address, registration date and NACE
-for any IČO. The `/score/enrich` endpoint accepts an IČO + behavioural
-metrics and resolves firmographics server-side (process-level cache).
+`ares.py` optionally calls the public ARES API to fetch address, registration
+date and NACE for an IČO; the `/score/enrich` endpoint uses it so a caller only
+has to send an IČO plus behavioural fields.
 
 ## 3. Models
 
-Both stages are **probability-calibrated** (`CalibratedClassifierCV`,
-isotonic) over a base estimator chosen from five candidates. Candidate
-selection uses a **one-standard-error rule on cross-validated AUC**, not raw
-held-out AUC: among models statistically tied on CV, the simplest/cheapest is
-chosen (rationale persisted to `metrics.json → *_model.selection`).
+Both stages are probability-calibrated (`CalibratedClassifierCV`, isotonic) on
+top of a base estimator chosen from five candidates. The candidate is picked
+with a one-standard-error rule on cross-validated AUC: among models that are
+statistically tied, the simplest wins (see `train.py`).
 
 | Model | Algorithm (auto-selected) | Target | Test AUC | PR-AUC | F1 |
 |---|---|---|---|---|---|
-| Conversion | Calibrated **HistGradientBoosting** | `Converted` | **0.935** | 0.861 | 0.757 |
-| Win | Calibrated **LogisticRegression** (converted leads only) | `Closed_Won` | 0.665 | — | 0.530 |
-| **Baseline** (rules) | Hand-written weighted sum (`baseline.py`) | `Converted` | 0.832¹ | — | 0.545 |
+| Conversion | Calibrated HistGradientBoosting | `Converted` | 0.935 | 0.861 | 0.757 |
+| Win | Calibrated LogisticRegression (converted leads only) | `Closed_Won` | 0.665 | - | 0.530 |
+| Baseline | Hand-written weighted rules (`baseline.py`) | `Converted` | 0.832* | - | 0.545 |
 
-**Conversion uplift over the rule baseline: +0.103 AUC, +0.213 F1**, stable
-across 5 time-series folds (CV std ≈ 0.003). Calibration error (ECE) drops
-from 0.084 → **0.019** after isotonic calibration, so the percentages are
-trustworthy probabilities, not just ranks.
+Conversion uplift over the rule baseline: +0.103 AUC, +0.213 F1, stable across
+5 time-series folds (CV std ~0.003). Isotonic calibration brings expected
+calibration error from 0.084 down to 0.019, so the percentage is a real
+probability, not just a rank.
 
-¹ This baseline (`0.832`) uses the generator's stored `Rule_Based_Score`,
-which folds in the excluded `Status` field. The rules the **API actually
-serves** (`baseline.score_frame`, no `Status`) score AUC ≈ 0.64 — the honest
-production comparison, used for the lift numbers in §5.
+\* This 0.832 baseline uses the generator's stored `Rule_Based_Score`, which
+includes the excluded `Status` field. The rules the API actually serves
+(`baseline.score_frame`, no `Status`) score around 0.64 - that is the honest
+production comparison and the one used for the lift figures in section 4.
 
-### Top conversion drivers (gain importance)
+### A note on leakage
 
-1. `Days_in_Pipeline__c` — pipeline maturity ⚠️ *leakage proxy (see §4)*
-2. `Proposal_Sent__c` — late-funnel commitment
-3. `Days_Since_Last_Activity__c` — recency ⚠️ *leakage proxy (see §4)*
-4. `rating_encoded` — sales qualification (Hot/Warm/Cold)
-5. `engagement_composite` — weighted digital-engagement score
-6. `Demo_Requested__c` — high-intent signal
-7. `Time_to_First_Response_h__c` — follow-up speed
-8. `Email_Open_Rate__c` — marketing engagement
+Two features (`Days_in_Pipeline__c`, `Days_Since_Last_Activity__c`) are derived
+from the generator's hidden `Status`, which drives the label. The model partly
+reconstructs `Status` from them, which inflates the 0.935 on this synthetic data
+but would not carry over to real CRM data. Training with
+`EXCLUDE_STATUS_PROXIES=1` drops those features; the resulting model scores ~0.88
+AUC and still reaches ~60% of converters in the top 20%. Quote the 0.88 figure
+when in doubt - it is the one that should generalise.
 
-The model is **explainable** via SHAP (`/score` returns `top_drivers`), not a
-black box — but the top two drivers carry a leakage caveat, addressed next.
+## 4. Rule vs AI, in business terms
 
-## 4. Model integrity, calibration & leakage control
+ROC-AUC is not what a sales team feels. The metric that matters is: working only
+the top slice of leads, how many real converters do you reach? On the held-out
+set (n=5981, 28% convert):
 
-**Honesty matters more than a flattering number.** Two pipeline-stage features
-(`Days_in_Pipeline__c`, `Days_Since_Last_Activity__c`) are mechanically derived
-from the synthetic generator's hidden `Status` field, which drives the label.
-The model partly reconstructs `Status` from these **leakage proxies**, which
-inflates the headline 0.935 AUC on synthetic data but **will not generalise to
-real CRM data**.
+| Top 20% of leads, worked by | Converters reached |
+|---|---|
+| Deployed rules | ~31% |
+| AI model | ~64% |
 
-This is controllable, not hidden:
+So roughly twice the opportunities for the same calls. These numbers are written
+into `metrics.json` (`ranking_lift_vs_live_baseline`) on every training run, via
+`ranking_metrics.py`.
 
-| Mode | Command | Conversion model | Test AUC | Capture @ top-20% vs **deployed** rules |
-|---|---|---|---|---|
-| **Default** (synthetic benchmark) | `python src/train.py` | hist_gbm | 0.935 | 64.1% vs 30.9% (**+555 converters, ~2.1×**) |
-| **Leakage-controlled** (real-data ready) | `EXCLUDE_STATUS_PROXIES=1 python src/train.py` | logreg | 0.880 | 60.5% vs 30.9% |
-
-Key takeaways:
-- **The uplift is real, not just leakage.** Even with all `Status` proxies
-  removed, ML reaches ~2× the converters of the deployed rules in the top 20%.
-- **On clean features, LogReg ties the GBM** — the 1-SE selection rule
-  automatically down-shifts to the simpler, more interpretable model. The
-  data-generating process is logistic-in-engineered-features; the GBM's extra
-  complexity mostly buys leakage exploitation.
-- **Before real-data deployment, train with `EXCLUDE_STATUS_PROXIES=1`.** The
-  0.880 / 60.5% figures are the trustworthy ones.
-
-Business prioritisation KPIs (decile lift, capture@K, AI-vs-rules head-to-head)
-are computed by `ranking_metrics.py` and stored in
-`metrics.json → ranking_lift_vs_live_baseline`.
-
-## 5. Architecture
-
-```
-data/res_open_data_sample.csv        # ČSÚ RES export (real Czech companies)
-        │
-        ▼
-src/data_generator.py                # NACE filter + synthetic CRM + targets
-        │
-        ▼
-data/lead_train.csv                  # ~30k labelled leads
-        │
-        ▼
-src/train.py ──► src/models/*.pkl, metrics.json, feature_importance.csv
-        │   (5-fold time-series CV · 1-SE selection · isotonic calibration · SHAP)
-        │
-        ├── contracts.py             # shared column/feature contracts (train ↔ serve)
-        ├── feature_engineering.py   # engineered features (shared train ↔ serve)
-        ├── modeling.py              # picklable LightGBM frame preprocessor
-        ├── ranking_metrics.py       # decile lift / capture@K business KPIs
-        ▼
-src/api.py (FastAPI)   ─┐            # /score, /score/batch, /score/enrich, /health, /metrics
-src/app.py (Streamlit) ─┤            # Pipeline · Lead Profile · Model Performance
-        ├── baseline.py              # rule-based scorer (deployed benchmark)
-        └── ares.py                  # live ARES REST enrichment
-```
-
-`contracts.py` is the single feature boundary shared by training, the API, and
-the dashboard, so they cannot silently drift apart.
-
-## 6. Quick start
-
-### Option A — Local (Python)
+## 5. Quick start
 
 ```bash
 pip install -r requirements.txt
 python src/data_generator.py                 # build data/lead_train.csv
-python src/train.py                          # train → src/models/*.pkl + metrics.json
-uvicorn api:app --app-dir src --port 8000    # scoring API → http://localhost:8000/docs
-python -m streamlit run src/app.py           # dashboard  → http://localhost:8501
+python src/train.py                          # train -> src/models/*.pkl + metrics.json
+uvicorn api:app --app-dir src --port 8000    # scoring API -> http://localhost:8000/docs
+python -m streamlit run src/app.py           # dashboard -> http://localhost:8501
 ```
 
-**Training flags (env vars):**
-- `EXCLUDE_STATUS_PROXIES=1` — train the leakage-controlled, real-data-ready model (see §4).
-- `RUN_OPTUNA=1` (`OPTUNA_TRIALS=50`) — hyperparameter search when LightGBM is the best single candidate.
+Training flags:
+- `EXCLUDE_STATUS_PROXIES=1` trains the leakage-controlled model (see section 3).
+- `RUN_OPTUNA=1` (with `OPTUNA_TRIALS`) runs a hyperparameter search when LightGBM
+  is the best single candidate.
 
-### Option B — Docker (one command, both services)
+### Docker
 
 ```bash
-docker compose up               # builds image, starts dashboard + scoring API
+docker compose up
 ```
 
-| Service                | URL                                  | Purpose                           |
-|------------------------|--------------------------------------|-----------------------------------|
-| Streamlit dashboard    | http://localhost:8501                | Business UI                       |
-| Scoring API (Swagger)  | http://localhost:8000/docs           | Interactive API explorer          |
-| `POST /score`          | http://localhost:8000/score          | Salesforce Apex callout target    |
-| `POST /score/enrich`   | http://localhost:8000/score/enrich   | IČO-only scoring (ARES-enriched)  |
-| `GET /health`          | http://localhost:8000/health         | Liveness probe                    |
-| `GET /metrics`         | http://localhost:8000/metrics        | Test-set evaluation metrics       |
+| Service | URL |
+|---|---|
+| Streamlit dashboard | http://localhost:8501 |
+| Scoring API (Swagger) | http://localhost:8000/docs |
+| `POST /score`, `POST /score/enrich` | scoring endpoints |
+| `GET /health`, `GET /metrics` | liveness and metrics |
 
-Trained artifacts are baked into the image at build time; rebuild with
-`docker compose up --build` after retraining.
+## 6. Dashboard
 
-## 7. App tour
+- Pipeline: every lead with its AI score, segment, baseline score and expected
+  win %, filterable by segment / industry / region / source, CSV export.
+- Lead Profile: pick a company, run what-if changes on the behavioural fields,
+  see the top SHAP drivers, pull live ARES data.
+- Model Performance: CV stability, AUC / PR-AUC / F1, calibration, confusion
+  matrix, rule-vs-AI comparison, feature importance.
 
-* **📋 Pipeline** — every lead with its AI score, segment, baseline score
-  and expected-win %, filterable by segment / industry / region / source.
-  CSV export ready for the Salesforce data loader.
-* **🏢 Lead Profile** — pick any company, run **what-if** simulations on
-  the behavioural features, see the top SHAP drivers, and pull live ARES data.
-* **📊 Model Performance** — CV stability, AUC / PR-AUC / F1, calibration,
-  confusion matrix, AI-vs-baseline comparison, and top feature importances.
+## 7. Salesforce integration
 
-## 8. Salesforce integration plan
-
-Delivered as three custom fields on **Lead** / **Opportunity**:
+Three custom fields on Lead / Opportunity:
 
 | Field | Type | Source |
 |---|---|---|
-| `AI_Score__c` | Number(0-100) | `model.predict_proba` × 100 |
-| `AI_Segment__c` | Picklist(High/Medium/Low) | derived from `AI_Score__c` |
-| `AI_Top_Driver__c` | Text | top SHAP feature (`top_drivers[0]`) |
+| `AI_Score__c` | Number(0-100) | `predict_proba` x 100 |
+| `AI_Segment__c` | Picklist (High/Medium/Low) | derived from the score |
+| `AI_Top_Driver__c` | Text | top SHAP feature |
 
-1. **Batch (recommended for MVP):** nightly job scores open Leads, exports
-   CSV, Salesforce Data Loader upserts the three fields. Zero SF code changes.
-2. **Real-time:** the FastAPI `/score` (or `/score/enrich`) service is called
-   from a Salesforce Apex trigger via Named Credential on Lead create/update.
+Two delivery options:
 
-## 9. Recommendation for management
+1. Batch (built): `sf_sync.py` scores open leads in-process and writes the fields
+   back via the Bulk API. No Salesforce code, no hosting. `create_test_leads.py`
+   seeds an org with sample leads. See `docs/SALESFORCE_INTEGRATION.md`.
+2. Real time: call `/score` (or `/score/enrich`) from an Apex trigger or Flow on
+   lead create/update.
 
-* **Adopt AI scoring.** Against the rules currently in production, the model
-  reaches **~2× the converters in the top 20% of leads** — the same outreach
-  budget, far more real opportunities. The ranking uplift survives leakage
-  removal, so it is a genuine signal, not a synthetic artifact.
-* **Conditions:** retrain quarterly; keep the rule-based scorer running in
-  parallel as a sanity check; monitor PR-AUC (positive class ≈ 28%) and
-  calibration (ECE).
-* **Risks & path to production:** outcome labels are synthetic in the MVP.
-  Moving to production requires real `Closed_Won` history, retraining with
-  `EXCLUDE_STATUS_PROXIES=1`, a champion/challenger test against the live
-  rules, and a drift monitor.
+Everything runs on a free Salesforce Developer Edition org.
 
-## 10. Repository layout
+## 8. Recommendation
+
+Adopt AI scoring, but stage it. Against the deployed rules it reaches roughly
+twice the converters in the top 20%, and that uplift survives leakage removal.
+Before full rollout: retrain on real history with `EXCLUDE_STATUS_PROXIES=1`, run
+a champion/challenger A/B against the current rules to confirm lift on real
+conversions, keep the rule scorer running in parallel, and monitor PR-AUC and
+calibration. Outcome labels are synthetic in the MVP, so real-data validation is
+the main precondition. Full analysis in `docs/EVALUATION_AND_DEPLOYMENT.md`.
+
+## 9. Repository layout
 
 ```
-.
-├── src/                            # Application source
-│   ├── app.py                      # Streamlit dashboard
-│   ├── api.py                      # FastAPI scoring service (Salesforce target)
-│   ├── train.py                    # Training · time-series CV · 1-SE selection · calibration
-│   ├── data_generator.py           # RES open data → labelled training set
-│   ├── contracts.py                # Shared column/feature contracts
-│   ├── feature_engineering.py      # Engineered features (shared train ↔ serve)
-│   ├── modeling.py                 # Picklable LightGBM frame preprocessor
-│   ├── ranking_metrics.py          # Decile lift / capture@K business KPIs
-│   ├── baseline.py                 # Rule-based scorer (deployed benchmark)
-│   ├── business_helpers.py         # ROI, lift, threshold stats, PSI drift
-│   ├── ares.py                     # ARES REST API wrapper
-│   ├── paths.py                    # Centralised filesystem locations
-│   └── models/                     # Generated by train.py
-│       ├── model.pkl, preprocessor.pkl, feature_names.pkl, conv_explainer.pkl
-│       ├── win_model.pkl, win_preprocessor.pkl, win_explainer.pkl, win_threshold.json
-│       └── metrics.json, feature_importance.csv, val_predictions.csv
-├── data/
-│   ├── res_open_data_sample.csv    # Seed (Czech business registry sample)
-│   └── lead_train.csv              # Generated by data_generator.py
-├── assets/enehano_logo.svg
-├── Dockerfile · docker-compose.yml # Single image, both services
-├── requirements.txt
-└── README.md
+src/
+  app.py                 Streamlit dashboard
+  api.py                 FastAPI scoring service
+  train.py               training, time-series CV, selection, calibration
+  data_generator.py      RES open data -> labelled training set
+  contracts.py           shared column / feature definitions
+  feature_engineering.py engineered features (training and inference)
+  modeling.py            LightGBM frame preprocessor
+  ranking_metrics.py     decile lift / capture@K
+  baseline.py            rule-based scorer
+  ares.py                ARES REST wrapper
+  sf_common.py           Salesforce connection + field config
+  sf_sync.py             batch scoring sync to Salesforce
+  create_test_leads.py   seed an org with sample leads
+  paths.py               filesystem locations
+  models/                generated by train.py (model.pkl, metrics.json, ...)
+data/
+  res_open_data_sample.csv
+  lead_train.csv         generated by data_generator.py
+docs/                    integration plan, evaluation + deployment
 ```
 
-## 11. Tech stack
+## 10. Stack
 
-Python · scikit-learn · LightGBM · pandas · Streamlit · Plotly · FastAPI ·
-Docker · SHAP · joblib · requests
+Python, scikit-learn, LightGBM, pandas, Streamlit, Plotly, FastAPI, Docker,
+SHAP, joblib, simple-salesforce.

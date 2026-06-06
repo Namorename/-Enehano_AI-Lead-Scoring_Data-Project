@@ -1,21 +1,11 @@
 """
-ranking_metrics.py
-==================
-Business-facing evaluation for lead *prioritisation*.
+Ranking metrics for lead prioritisation.
 
-Lead scoring is a ranking problem: a sales team works the top-K leads, so the
-metric that matters is "how many real converters do we reach for a fixed amount
-of outreach", not raw ROC-AUC. This module turns held-out predictions into the
-KPIs a revenue team actually acts on:
-
-  * decile lift      — precision and lift within each 10% score band
-  * capture@K        — share of all converters found in the top-K% of leads
-  * head-to-head     — the AI model vs the rule-based baseline on the same set
-
-These are reporting-only helpers: they never touch the scoring path, so adding
-them changes no served prediction. They exist so the claim "ML beats the rules"
-is measured in money terms (converters reached per call made) and tracked over
-time in metrics.json instead of being asserted from AUC alone.
+A sales team works the top of the list, so what matters is how many real
+converters land in the top K% of the ranking, not just ROC-AUC. These helpers
+turn held-out predictions into decile lift, capture@K and an AI-vs-rules
+comparison, which get written into metrics.json. Reporting only; they don't
+affect any score the service returns.
 """
 from __future__ import annotations
 
@@ -34,18 +24,17 @@ def _as_arrays(y_true, y_score) -> tuple[np.ndarray, np.ndarray]:
 
 
 def decile_lift(y_true, y_score, n_bands: int = 10) -> pd.DataFrame:
-    """
-    Rank leads best→worst and report precision/lift per equal-sized band.
+    """Rank leads high to low and report precision and lift for each equal band.
 
-    `lift` is band precision divided by the overall positive rate: lift=3.0 in
-    the top band means those leads convert 3x more often than a random lead.
-    Ties are broken by a stable sort, so equal scores never inflate a band.
+    Lift is the band's precision over the overall positive rate: 3.0 in the top
+    band means those leads convert 3x more often than average. A stable sort
+    keeps ties from inflating a band.
     """
     y, s = _as_arrays(y_true, y_score)
     base_rate = y.mean()
     order = np.argsort(-s, kind="stable")
     y_sorted = y[order]
-    # np.array_split tolerates lengths that are not divisible by n_bands.
+    # array_split handles counts that don't divide evenly into n_bands.
     bands = np.array_split(y_sorted, n_bands)
 
     rows = []
@@ -65,11 +54,8 @@ def decile_lift(y_true, y_score, n_bands: int = 10) -> pd.DataFrame:
 
 
 def capture_at_k(y_true, y_score, k_fractions=(0.05, 0.10, 0.20, 0.30)) -> dict:
-    """
-    For each top-K fraction, report precision, lift, and the share of all
-    converters captured — the "if we only call the top K%, how many real
-    opportunities do we reach" curve.
-    """
+    """For each top-K fraction, report precision, lift and the share of all
+    converters that fall in that top slice."""
     y, s = _as_arrays(y_true, y_score)
     base_rate = y.mean()
     total_pos = y.sum()
@@ -97,11 +83,9 @@ def ranking_report(
     baseline_score=None,
     k_fractions=(0.05, 0.10, 0.20, 0.30),
 ) -> dict:
-    """
-    Full prioritisation report for metrics.json. When a baseline score is given,
-    emit the head-to-head delta — extra converters the AI reaches over the rules
-    at each top-K budget, which is the number a sales lead understands directly.
-    """
+    """Build the prioritisation block for metrics.json. With a baseline score it
+    also reports the head-to-head gap: how many more converters the AI reaches at
+    each top-K cut-off."""
     y, ai = _as_arrays(y_true, ai_score)
     report: dict = {
         "positive_rate": round(float(y.mean()), 4),

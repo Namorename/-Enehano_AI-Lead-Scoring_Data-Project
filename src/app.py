@@ -1,24 +1,24 @@
 """
 app.py
 ======
-Enehano Lead Intelligence — Streamlit dashboard (API-backed edition).
+Enehano Lead Intelligence - Streamlit dashboard (API-backed edition).
 
 All model inference is delegated to the FastAPI backend (api.py).
-No joblib / sklearn / shap imports — the frontend is a pure UI layer.
+No joblib / sklearn / shap imports - the frontend is a pure UI layer.
 
 Column contract:
-  Region        → generator writes Region_Name; load_data() adds a 'Region' alias.
-  AI_Score      → populated by score_pipeline() via the /score/batch API endpoint.
-  Rule_Score    → returned by the API ScoreOutput.rule_score field.
+  Region        -> generator writes Region_Name; load_data() adds a 'Region' alias.
+  AI_Score      -> populated by score_pipeline() via the /score/batch API endpoint.
+  Rule_Score    -> returned by the API ScoreOutput.rule_score field.
 
 Tabs:
-  Overview        · headline KPIs and plain-English findings
-  Business Value  · ROI calculator (revenue uplift, payback)
-  My Leads        · prioritised pipeline + filters + CSV export
-  Top Lead Cards  · swipeable Tinder-style card deck
-  Lead Profile    · single-lead deep-dive with what-if simulator + ARES
-  Regional Map    · Czech Republic bubble map by Kraj
-  Model Insights  · ROC / PR / Lift / threshold tuner
+  Overview        - headline KPIs and plain-English findings
+  Business Value  - ROI calculator (revenue uplift, payback)
+  My Leads        - prioritised pipeline + filters + CSV export
+  Top Lead Cards  - swipeable Tinder-style card deck
+  Lead Profile    - single-lead deep-dive with what-if simulator + ARES
+  Regional Map    - Czech Republic bubble map by Kraj
+  Model Insights  - ROC / PR / Lift / threshold tuner
 """
 from __future__ import annotations
 
@@ -105,7 +105,7 @@ st.markdown(
     }}
     .stButton > button *, .stDownloadButton > button * {{ color: #0a0e14 !important; }}
 
-    /* Glassmorphism card — the main reusable surface */
+    /* Glassmorphism card - the main reusable surface */
     .glass-card {{
         background: rgba(12, 18, 25, 0.82);
         backdrop-filter: blur(14px);
@@ -246,12 +246,12 @@ class APIClient:
 
     @classmethod
     def score_single(cls, lead_dict: dict) -> dict | None:
-        """POST /score — full LeadInput payload."""
+        """POST /score - full LeadInput payload."""
         return cls._post("/score", lead_dict)
 
     @classmethod
     def score_batch(cls, leads: list[dict], include_drivers: bool = False) -> list[dict] | None:
-        """POST /score/batch — up to 500 leads."""
+        """POST /score/batch - up to 500 leads."""
         result = cls._post("/score/batch", {
             "leads": leads,
             "include_drivers": include_drivers,
@@ -260,7 +260,7 @@ class APIClient:
 
     @classmethod
     def score_enrich(cls, ico: str, behavioral: dict) -> dict | None:
-        """POST /score/enrich — IČO + behavioral fields only."""
+        """POST /score/enrich - IČO + behavioral fields only."""
         return cls._post("/score/enrich", {"ico": ico, **behavioral})
 
     @classmethod
@@ -278,7 +278,7 @@ if not _api_online:
     )
 
 
-# ── Data loading (local CSV — no inference) ───────────────────────────────────
+# ── Data loading (local CSV - no inference) ───────────────────────────────────
 
 @st.cache_data
 def load_data() -> pd.DataFrame:
@@ -318,7 +318,7 @@ def score_pipeline_via_api(df: pd.DataFrame) -> pd.DataFrame:
         st.error("FastAPI backend is offline, so AI scoring cannot be computed.")
         st.stop()
 
-    # Build a minimal payload — only the fields the API expects as LeadInput.
+    # Build a minimal payload - only the fields the API expects as LeadInput.
     api_cols = [c for c in df.columns if c not in API_PAYLOAD_EXCLUDE_COLS]
     leads_payload = df[api_cols].fillna(0).to_dict(orient="records")
 
@@ -373,7 +373,7 @@ with hdr_c:
         st.image(str(LOGO_SVG), width="stretch")
     st.markdown(
         "<p class='hero' style='text-align:center'>Lead Intelligence</p>"
-        "<p class='subtle' style='text-align:center'>Know which leads to call first — backed by data, not guesswork.</p>",
+        "<p class='subtle' style='text-align:center'>Know which leads to call first - backed by data, not guesswork.</p>",
         unsafe_allow_html=True,
     )
 
@@ -408,8 +408,8 @@ with tab_overview:
         lift10 = bh.lift_table(val_df["y_true"].values, val_df["ai_proba"].values, bins=10).iloc[0]
         st.markdown(
             f"<div class='finding'>📈 <b>Working only the top 10% of leads, your team would catch "
-            f"{lift10['cum_recall']:.0%} of all conversions</b> — that's a "
-            f"<b>{lift10['lift']:.1f}× boost</b> versus working leads in random order.</div>",
+            f"{lift10['cum_recall']:.0%} of all conversions</b> - that's a "
+            f"<b>{lift10['lift']:.1f}x boost</b> versus working leads in random order.</div>",
             unsafe_allow_html=True,
         )
     if metrics is not None:
@@ -448,13 +448,13 @@ with tab_overview:
                            title="AI score distribution")
         fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                           font_color="#e0e0e0", bargap=0.05,
-                          xaxis_title="Score (0–100)", yaxis_title="Number of leads")
+                          xaxis_title="Score (0-100)", yaxis_title="Number of leads")
         st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("How to read this dashboard (30-second guide)"):
         st.markdown(
             "- **Overview** (you are here): headline numbers and what they mean.\n"
-            "- **Business Value**: how much money the AI can earn — input your assumptions.\n"
+            "- **Business Value**: how much money the AI can earn - input your assumptions.\n"
             "- **My Leads**: every lead, ranked. Filter, then export to CSV for Salesforce.\n"
             "- **Top Lead Cards**: flip through the hottest leads, one at a time.\n"
             "- **Lead Profile**: dive into one company. Try 'what-if' to push the score.\n"
@@ -523,7 +523,7 @@ with tab_value:
         with c3:
             st.markdown("**Currency / horizon**")
             currency   = st.selectbox("Currency label", ["CZK", "EUR", "USD"], index=0)
-            horizon    = st.selectbox("Show numbers as", ["Per quarter", "Per year (×4)"], index=0)
+            horizon    = st.selectbox("Show numbers as", ["Per quarter", "Per year (x4)"], index=0)
             multiplier = 4 if horizon.startswith("Per year") else 1
 
         ai_lift   = bh.lift_table(val_df["y_true"].values, val_df["ai_proba"].values, bins=20)
@@ -555,7 +555,7 @@ with tab_value:
         st.markdown(
             f"<div class='finding'>💡 At <b>top {ai_top_pct}% prioritisation</b>, AI is expected to generate "
             f"<b>{_fmt(r.uplift_vs_baseline)}</b> more revenue than the current rule-based approach"
-            f" — that's a <b>{(r.uplift_vs_baseline/max(1,r.revenue_baseline))*100:.0f}% lift</b>.</div>",
+            f" - that's a <b>{(r.uplift_vs_baseline/max(1,r.revenue_baseline))*100:.0f}% lift</b>.</div>",
             unsafe_allow_html=True,
         )
 
@@ -574,7 +574,7 @@ with tab_value:
             st.markdown(
                 f"- Base conversion rate observed in data: **{base_rate:.1%}**\n"
                 f"- Win-once-converted: **{win_rate:.0%}** (your input)\n"
-                f"- Effective deal value (deal × win): **{avg_deal*win_rate:,.0f} {currency}**\n"
+                f"- Effective deal value (deal x win): **{avg_deal*win_rate:,.0f} {currency}**\n"
                 "- 'Random' assumes reps pick leads in arbitrary order.\n"
                 "- 'Rule-based' uses the current heuristic scoring (`baseline.py`).\n"
                 "- 'AI' uses the trained model and the top-X% prioritisation slider above."
@@ -606,7 +606,7 @@ with tab_leads:
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Leads in view",    f"{len(view):,}")
     k2.metric("🔥 High potential", f"{(view['Segment']=='High').sum():,}")
-    k3.metric("Avg AI score",     f"{view['AI_Score'].mean():.1f}" if len(view) else "—")
+    k3.metric("Avg AI score",     f"{view['AI_Score'].mean():.1f}" if len(view) else "-")
     k4.metric("Expected wins",    f"{int((view['Expected_Win_%']/100).sum()):,}")
 
     display_cols = ["IČO", "Company_Name", "Industry", "Region", "LeadSource",
@@ -654,7 +654,7 @@ with tab_profile:
         row = matches.iloc[0]
         st.title(f"🏢 {row['Company_Name']}")
         st.caption(
-            f"IČO {row['IČO']} · {row.get('Legal_Form_Label', '—')} · {row['Industry']} · {row['Region']}"
+            f"IČO {row['IČO']} - {row.get('Legal_Form_Label', '-')} - {row['Industry']} - {row['Region']}"
         )
 
         # ── What-if Simulator (sidebar) ───────────────────────────────────
@@ -669,7 +669,7 @@ with tab_profile:
             sim_demo  = st.checkbox("Demo requested",  bool(row["Demo_Requested__c"]))
             sim_li    = st.checkbox("LinkedIn viewed", bool(row["LinkedIn_Viewed__c"]))
 
-        # Build the what-if payload — use /score/enrich so we don't need to
+        # Build the what-if payload - use /score/enrich so we don't need to
         # repeat all firmographic fields (ARES fills those on the backend).
         behavioral_override = {
             "Time_to_First_Response_h__c": sim_ttfr,
@@ -736,7 +736,7 @@ with tab_profile:
                 unsafe_allow_html=True,
             )
             st.caption(bh.explain_segment(seg))
-            st.metric("Expected win % (Convert × Win)", f"{expected_win:.1f}%")
+            st.metric("Expected win % (Convert x Win)", f"{expected_win:.1f}%")
             st.metric("Rule-based score (baseline)",    f"{rule_score} / 100")
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -898,7 +898,7 @@ with tab_insights:
 
         st.divider()
         st.markdown("#### 🎚 Pick the minimum score worth calling")
-        thr = st.slider("Minimum AI score (0–100)", 5, 95, 50, 5)
+        thr = st.slider("Minimum AI score (0-100)", 5, 95, 50, 5)
         ts  = bh.threshold_stats(y, p_ai * 100, thr)
 
         t1, t2, t3, t4 = st.columns(4)
@@ -929,7 +929,7 @@ with tab_insights:
                       color_discrete_map={"AI": ENEHANO_GREEN, "Rule-based": WARN, "Random": DANGER},
                       labels={"top_pct": "% of leads worked (best first)",
                               "cum_recall": "% of conversions captured"},
-                      title="Cumulative gain — the higher and earlier, the better")
+                      title="Cumulative gain - the higher and earlier, the better")
         fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                           font_color="#e0e0e0", yaxis_tickformat=".0%", xaxis_ticksuffix="%")
         st.plotly_chart(fig, use_container_width=True)
@@ -970,7 +970,7 @@ with tab_insights:
                            title="Score distribution: past vs. recent leads")
         fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                           font_color="#e0e0e0", bargap=0.05,
-                          xaxis_title="AI score (0–100)", yaxis_title="Number of leads",
+                          xaxis_title="AI score (0-100)", yaxis_title="Number of leads",
                           legend=dict(orientation="h", y=-0.2))
         st.plotly_chart(fig, use_container_width=True)
 
@@ -1018,7 +1018,7 @@ with tab_insights:
                               yaxis_title="", xaxis_title="Importance")
             st.plotly_chart(fig, use_container_width=True)
 
-        with st.expander("⚙ For data scientists — raw metrics"):
+        with st.expander("⚙ For data scientists - raw metrics"):
             conv_t = metrics["conversion_model"]["test"]
             base_c = metrics["baseline_conversion"]
             comp   = pd.DataFrame({
@@ -1043,8 +1043,8 @@ with tab_insights:
 
 
 st.divider()
-st.caption("Enehano Solutions · Lead Intelligence · Predictive AI MVP")
+st.caption("Enehano Solutions - Lead Intelligence - Predictive AI MVP")
 
-# Floating chat bubble — always visible, on every tab
+# Floating chat bubble - always visible, on every tab
 import ui_chat
 ui_chat.render_bubble(scored_df)

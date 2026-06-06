@@ -1,13 +1,13 @@
 """
 ui_chat.py
 ==========
-'Ask the data' floating chat bubble — API-aware edition.
+'Ask the data' floating chat bubble - API-aware edition.
 
 Query execution remains rule-based (nl_query.py) and operates on the
 locally scored DataFrame for sub-millisecond response times. The backend
 API is used for:
   - /metrics endpoint to enrich the chat with live model performance figures.
-  - Health-check to gracefully degrade when the API is offline.
+  - Health-check so the chat still works when the API is offline.
 
 Column contract:
   - Uses 'Region'    (aliased in load_data(), matches nl_query DIMENSIONS key)
@@ -30,7 +30,7 @@ WARN          = "#ffc107"
 DANGER        = "#ff4b4b"
 _HISTORY_KEY  = "_chat_history"
 _API_BASE     = os.getenv("SCORING_API_URL", "http://localhost:8000")
-_API_TIMEOUT  = 4   # seconds — keeps the chat bubble snappy
+_API_TIMEOUT  = 4   # seconds - keeps the chat bubble snappy
 
 
 # ── Backend helpers ───────────────────────────────────────────────────────────
@@ -370,7 +370,7 @@ def _chat_dialog(scored_df: pd.DataFrame) -> None:
         base_auc  = api_metrics.get("baseline_conversion", {}).get("auc_roc")
         if conv_auc and base_auc:
             st.caption(
-                f"🔗 API connected · Model AUC {conv_auc:.0%} "
+                f"🔗 API connected - Model AUC {conv_auc:.0%} "
                 f"(+{(conv_auc - base_auc)*100:.0f} pts vs. rules)"
             )
     else:
@@ -445,7 +445,7 @@ def _chat_dialog(scored_df: pd.DataFrame) -> None:
     with foot_l:
         st.caption(
             "Answers computed live from your pipeline data."
-            + (" · API metrics live." if api_metrics else " · API offline.")
+            + (" - API metrics live." if api_metrics else " - API offline.")
         )
     with foot_r:
         if history and st.button("🗑 Clear", key="dlg_clear", use_container_width=True):

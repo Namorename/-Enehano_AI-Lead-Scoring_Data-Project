@@ -1,31 +1,14 @@
 """
-sf_sync.py
-==========
-Batch lead-scoring sync with Salesforce — integration **Path A** (see
-docs/SALESFORCE_INTEGRATION.md).
+Batch-score Salesforce leads and write the results back.
 
-Flow:
-  1. Connect to a Salesforce org (Developer Edition works) via simple-salesforce.
-  2. Query open Leads that carry a company IČO.
-  3. Score each Lead **in-process** with the trained models (no HTTP, no hosting):
-     firmographics are resolved from ARES via the IČO, exactly like /score/enrich.
-  4. Write the AI fields back to Salesforce in one Bulk API call.
+Pulls open leads, scores them with the trained models (firmographics come from
+ARES via the IČO, the same way the /score/enrich endpoint works), and updates the
+AI fields through the Bulk API. Runs anywhere that can reach Salesforce; nothing
+needs to be hosted.
 
-Because scoring runs in-process and the job talks to Salesforce *outbound*, this
-path needs no public hosting — it can run from a laptop, a cron box, or a CI job.
-
-Configuration (env vars, optionally via a .env file — see .env.example):
-  SF_USER, SF_PASS, SF_TOKEN     Salesforce username / password / security token
-  SF_DOMAIN                      'login' (prod/Dev Edition, default) or 'test' (sandbox)
-  SF_ICO_FIELD                   Lead field holding the IČO (default 'ICO__c')
-  SF_BEHAVIORAL_FIELDS           Comma-separated Lead fields to feed the model
-                                 (must be valid EnrichLeadInput names). Empty by
-                                 default so a fresh org with only ICO__c still works.
-
-Usage:
-  python src/sf_sync.py --dry-run          # score + print, write nothing
-  python src/sf_sync.py --limit 50         # only the first 50 leads
-  python src/sf_sync.py                     # full run, writes back to Salesforce
+    python src/sf_sync.py --dry-run     # score and print only
+    python src/sf_sync.py --limit 50    # first 50 leads
+    python src/sf_sync.py               # full run
 """
 from __future__ import annotations
 
@@ -36,22 +19,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import api  # noqa: E402  (in-process models + scoring pipeline)
-from sf_common import (  # noqa: E402
+import api
+from sf_common import (
     BEHAVIORAL_FIELDS,
     ICO_FIELD,
     connect,
     enable_utf8_stdout,
 )
 
-# Note: ICO_FIELD / BEHAVIORAL_FIELDS / connect() come from sf_common so the
-# seeder (create_test_leads.py) can share them without importing the ML stack.
-# BEHAVIORAL_FIELDS is empty by default (SF_BEHAVIORAL_FIELDS) so a fresh org
-# with only ICO__c added still works; the model then scores on firmographics
-# plus default behaviour. Opt in once those custom fields exist, e.g.:
-#   SF_BEHAVIORAL_FIELDS="Web_Interactions__c,Email_Opens__c,Meetings_Held__c,Demo_Requested__c,Proposal_Sent__c"
+# BEHAVIORAL_FIELDS is empty unless SF_BEHAVIORAL_FIELDS is set, so a lead with
+# only an IČO still scores (on firmographics). Set it once the engagement fields
+# exist on the Lead object, e.g.:
+#   SF_BEHAVIORAL_FIELDS="Web_Interactions__c,Email_Opens__c,Meetings_Held__c"
 
-# AI result fields written back to the Lead. Override here if your API names differ.
+# Lead fields we write the result into.
 OUT_SCORE = "AI_Score__c"
 OUT_SEGMENT = "AI_Segment__c"
 OUT_EXPECTED_WIN = "Expected_Win__c"
@@ -72,12 +53,11 @@ def build_soql(limit: int | None = None) -> str:
 
 
 def score_records(records: list[dict]) -> tuple[list[dict], list[dict]]:
-    """
-    Pure, offline-testable core: map Salesforce Lead dicts → Lead update dicts.
+    """Turn Salesforce lead dicts into update dicts.
 
-    Returns (updates, failures). A failure (e.g. ARES could not resolve the IČO)
-    skips that one lead instead of aborting the batch. No Salesforce or network
-    state is required beyond ARES, which `api.score_enrich` handles + caches.
+    Returns (updates, failures). A lead whose IČO ARES can't resolve is added to
+    failures and skipped, so one bad row doesn't stop the rest. This has no
+    Salesforce dependency, so it can be tested on its own.
     """
     updates: list[dict] = []
     failures: list[dict] = []
@@ -102,7 +82,7 @@ def score_records(records: list[dict]) -> tuple[list[dict], list[dict]]:
                 OUT_SCORED_DATE: now,
                 OUT_MODEL_VERSION: api.app.version,
             })
-        except Exception as exc:  # noqa: BLE001 - one bad lead must not kill the batch
+        except Exception as exc:  # skip this lead, keep going
             failures.append({"Id": rec.get("Id"), "ico": ico, "error": str(exc)})
     return updates, failures
 
@@ -136,7 +116,7 @@ def main() -> None:
         return
 
     if args.dry_run:
-        print("\n--- DRY RUN (no write) — sample of first 5 updates ---")
+        print("\n--- DRY RUN (no write), first 5 updates ---")
         for u in updates[:5]:
             print(f"  {u['Id']}  score={u[OUT_SCORE]}  seg={u[OUT_SEGMENT]}  "
                   f"win={u[OUT_EXPECTED_WIN]}  driver={u[OUT_TOP_DRIVER]}")

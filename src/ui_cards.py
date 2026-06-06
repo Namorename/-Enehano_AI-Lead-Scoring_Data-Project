@@ -1,7 +1,7 @@
 """
 ui_cards.py
 ===========
-Tinder-style lead card stack — API-backed edition.
+Tinder-style lead card stack - API-backed edition.
 
 Key drivers are sourced directly from the API response (SHAP top_drivers
 returned by /score/batch or /score/enrich), eliminating the need for local
@@ -27,15 +27,15 @@ DANGER        = "#ff4b4b"
 def suggested_action(row: pd.Series) -> tuple[str, str]:
     """Return (emoji, action_text) based on lead behavioural signals."""
     if row.get("Demo_Requested__c"):
-        return "📞", "Call within 24h — demo already requested"
+        return "📞", "Call within 24h - demo already requested"
     if row.get("Proposal_Sent__c"):
         return "✉️", "Follow up on the open proposal"
     if float(row.get("Email_Clicks__c", 0)) >= 3:
         return "📨", "Send tailored case study (high email engagement)"
     if float(row.get("Web_Interactions__c", 0)) >= 5:
-        return "💬", "Open with a chat — they keep visiting the site"
+        return "💬", "Open with a chat - they keep visiting the site"
     if float(row.get("Time_to_First_Response_h__c", 99)) < 4:
-        return "📞", "Hot lead — call today"
+        return "📞", "Hot lead - call today"
     return "📅", "Schedule discovery call this week"
 
 
@@ -44,7 +44,7 @@ def _row_to_card(row: pd.Series) -> dict:
     Convert a scored DataFrame row into a card dict for the HTML renderer.
 
     top_drivers is consumed directly from the API response stored in the
-    'top_drivers' column — no local SHAP computation required.
+    'top_drivers' column - no local SHAP computation required.
     """
     score = round(float(row["AI_Score"]), 1)
 
@@ -53,7 +53,7 @@ def _row_to_card(row: pd.Series) -> dict:
         "Medium": WARN,
     }.get(score_segment(score), DANGER)
 
-    # API already computed the SHAP drivers; fall back gracefully if missing.
+    # API already computed the SHAP drivers; fall back if they're missing.
     raw_drivers = row.get("top_drivers") or []
     # The column may be stored as a list or a string representation of a list.
     if isinstance(raw_drivers, str):
@@ -68,13 +68,13 @@ def _row_to_card(row: pd.Series) -> dict:
 
     return {
         "ico":      str(row.get("IČO", "")),
-        "company":  str(row.get("Company_Name", "—")),
-        "industry": str(row.get("Industry", "—")),
-        "region":   str(row.get("Region", "—")),
-        "source":   str(row.get("LeadSource", "—")),
+        "company":  str(row.get("Company_Name", "-")),
+        "industry": str(row.get("Industry", "-")),
+        "region":   str(row.get("Region", "-")),
+        "source":   str(row.get("LeadSource", "-")),
         "score":    score,
         "color":    color,
-        "segment":  str(row.get("Segment", "—")).upper(),
+        "segment":  str(row.get("Segment", "-")).upper(),
         "drivers":  drivers,
         "expected": round(float(row.get("Expected_Win_%", 0)), 1),
         "rule":     int(row.get("Rule_Score", 0)),
@@ -95,7 +95,7 @@ def render(scored_df: pd.DataFrame,
         Full scored pipeline DataFrame (must include 'top_drivers' column).
     importance_df:
         Feature importance table from train.py (kept for API compatibility;
-        no longer used for driver computation — API SHAP values take precedence).
+        no longer used for driver computation - API SHAP values take precedence).
     top_n:
         Maximum number of cards to display.
     """
@@ -117,8 +117,8 @@ def render(scored_df: pd.DataFrame,
     st.subheader("Swipe through your hottest leads")
     st.caption(
         f"{len(pool)} top-ranked leads, deck-style. "
-        "**Drag** the card, hit **→** / **←**, or use the buttons. "
-        "Swipe right = call this lead · left = skip · ↶ = undo.  \n"
+        "**Drag** the card, hit **->** / **←**, or use the buttons. "
+        "Swipe right = call this lead - left = skip - ↶ = undo.  \n"
         "Key drivers are computed by the backend SHAP explainer."
     )
 

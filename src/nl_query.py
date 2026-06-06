@@ -4,8 +4,8 @@ nl_query.py
 Lightweight rule-based NL query engine.
  
 Column contract:
-  - DIMENSIONS maps "Region" → the 'Region' column (alias set by load_data())
-  - suggestions() uses df["Region"] — will work because of the alias
+  - DIMENSIONS maps "Region" -> the 'Region' column (alias set by load_data())
+  - suggestions() uses df["Region"] - will work because of the alias
 """
 from __future__ import annotations
  

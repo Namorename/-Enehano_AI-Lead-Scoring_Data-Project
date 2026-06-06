@@ -2,7 +2,7 @@
 Splash screen shown once per session before the dashboard loads.
 
 Renders the Enehano logo on a green gradient with a fade-in / slide-up
-animation, then the dashboard mounts underneath. CSS-only — no JS, no
+animation, then the dashboard mounts underneath. CSS-only - no JS, no
 extra deps. Runs entirely client-side; the Python side only decides
 whether to inject the markup.
 """

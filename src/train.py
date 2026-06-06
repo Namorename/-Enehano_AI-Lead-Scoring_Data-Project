@@ -4,8 +4,8 @@ train.py
 Trains and evaluates the Enehano lead-scoring models.
 
 Two classifiers are trained:
-  * conversion model : Lead → Opportunity  (target = Converted)
-  * win model        : Opportunity → Closed Won  (target = Closed_Won,
+  * conversion model : Lead -> Opportunity  (target = Converted)
+  * win model        : Opportunity -> Closed Won  (target = Closed_Won,
                        trained only on rows where Converted == 1)
 
 Evaluation:
@@ -17,24 +17,24 @@ Evaluation:
 
 Artifacts written:
   model.pkl, preprocessor.pkl, feature_names.pkl,
-  conv_explainer.pkl (SHAP explainer for the conversion base model — a
-    TreeExplainer for tree backends, a LinearExplainer for linear ones),
+  conv_explainer.pkl (SHAP explainer for the conversion base model: a
+    TreeExplainer for tree models, a LinearExplainer for linear ones),
   win_model.pkl, win_preprocessor.pkl,
-  win_explainer.pkl (SHAP explainer for the win base model; see _build_explainer
-    for the per-family selection, or None if the family is unsupported),
+  win_explainer.pkl (same idea for the win model; see _build_explainer, or None
+    if the model type isn't supported),
   metrics.json, feature_importance.csv, val_predictions.csv
 
-  NOTE: the served models are CalibratedClassifierCV wrappers; each explainer is
-  built on the underlying *base* estimator, so local SHAP values explain the
-  uncalibrated ranking, not the post-calibration probability.
+  Note: the served models are CalibratedClassifierCV wrappers, but each explainer
+  is built on the base estimator, so SHAP values explain the uncalibrated ranking
+  rather than the calibrated probability.
 
 Column contract (matches data_generator.py output):
-  ID / audit cols  → dropped before building X (never seen by the model)
-  Leaky cols       → dropped (Conversion_Probability, Rule_Based_Score/Segment)
-  Date strings     → parsed by feature_engineering.py, then dropped from X
-  Bool flags       → explicitly cast to int (0/1), so StandardScaler handles
+  ID / audit cols  -> dropped before building X (never seen by the model)
+  Leaky cols       -> dropped (Conversion_Probability, Rule_Based_Score/Segment)
+  Date strings     -> parsed by feature_engineering.py, then dropped from X
+  Bool flags       -> explicitly cast to int (0/1), so StandardScaler handles
                      them correctly without dtype ambiguity
-  Legal_Form_Code  → generator writes it as str, so OHE handles it correctly
+  Legal_Form_Code  -> generator writes it as str, so OHE handles it correctly
 """
 
 import json
@@ -143,17 +143,16 @@ WIN_LGBM_CATEGORICAL_FEATURES = [
 RUN_OPTUNA = os.getenv("RUN_OPTUNA", "0").strip().lower() in {"1", "true", "yes"}
 OPTUNA_TRIALS = int(os.getenv("OPTUNA_TRIALS", "50"))
 
-# Opt-in leakage control. Default OFF preserves the existing artifacts/behaviour.
+# Leakage control, off by default (keeps the existing artifacts unchanged).
 # Set EXCLUDE_STATUS_PROXIES=1 to drop the Status-derived proxy features
-# (STATUS_PROXY_COLS) and train a model whose uplift generalises to real CRM data.
+# (STATUS_PROXY_COLS); the resulting model holds up better on real CRM data.
 EXCLUDE_STATUS_PROXIES = (
     os.getenv("EXCLUDE_STATUS_PROXIES", "0").strip().lower() in {"1", "true", "yes"}
 )
 
-# Candidate complexity ordering for the one-standard-error selection rule. When
-# several candidates are statistically tied on cross-validated AUC, prefer the
-# simplest / cheapest / most operationally robust one instead of chasing noise
-# in the held-out AUC. Lower rank = preferred. Unknown names sort last.
+# Complexity order for the one-standard-error rule below. When several candidates
+# are within one SE of the best CV AUC, we keep the simpler one rather than the
+# one that happens to win on the test split. Lower rank = preferred; unknown last.
 MODEL_COMPLEXITY_RANK = {
     "logreg": 0,
     "hist_gbm": 1,
@@ -191,7 +190,7 @@ def _build_preprocessor(X: pd.DataFrame) -> Tuple[ColumnTransformer, list, list]
     codes (Legal_Form_Code) end up in the categorical branch.
     """
     num = X.select_dtypes(include=["int64", "float64", "int32", "float32"]).columns.tolist()
-    # "str" works in pandas 3+; "object" is the legacy alias — support both
+    # "str" works in pandas 3+; "object" is the legacy alias - support both
     cat = X.select_dtypes(include=["object", "string", "category"]).columns.tolist()
     pre = ColumnTransformer(
         transformers=[
@@ -255,7 +254,7 @@ def _threshold_tuning(y_true: pd.Series, y_proba: np.ndarray) -> tuple[float, di
 
 
 def _legacy_cross_val_auc(model_factory, pre_factory, X: pd.DataFrame, y: pd.Series) -> dict:
-    """5-fold stratified CV — each fold refits its own preprocessor to avoid leakage."""
+    """5-fold stratified CV - each fold refits its own preprocessor to avoid leakage."""
     skf  = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     aucs = []
     for tr, va in skf.split(X, y):
@@ -335,7 +334,7 @@ def _train_legacy_gbm(name: str, X: pd.DataFrame, y: pd.Series) -> dict:
 
 def _baseline_metrics(df: pd.DataFrame, y: pd.Series) -> dict:
     """
-    Rule-based baseline: uses Rule_Based_Score (0–100) normalised to [0,1]
+    Rule-based baseline: uses Rule_Based_Score (0-100) normalised to [0,1]
     as the probability proxy. The score column is read from the raw df so it
     is never part of the model feature matrix.
     """
@@ -911,20 +910,20 @@ def _refit_with_calibration(
 
 def _build_explainer(model: Any, preprocessor: Any = None, background_X: Any = None):
     """
-    Return a SHAP explainer matched to the estimator family.
+    Pick a SHAP explainer for the model type:
 
-    Tree models   → shap.TreeExplainer (fast, exact path-dependent values).
-    Linear models → shap.LinearExplainer (needs a transformed background sample,
-                    so the conversion/win preprocessor and a representative X
-                    slice must be supplied).
-    Anything else (e.g. StackingClassifier) → None; every caller already
-    null-checks the explainer, so "no explainer" degrades gracefully rather
-    than producing a useless pickled None that lies about its own type.
+      - tree models   -> TreeExplainer
+      - linear models -> LinearExplainer (needs the preprocessor and a sample of
+                         X for the background, so pass both)
+      - anything else (e.g. a StackingClassifier) -> None
+
+    Callers already check for None, so returning None just means no SHAP for that
+    model rather than an error.
     """
     base = getattr(model, "estimator", model)  # unwrap calibrated/frozen wrappers
     try:
-        # Linear models expose coef_ but no feature_importances_; route them to
-        # LinearExplainer so logistic-regression win models stay explainable.
+        # Linear models have coef_ but no feature_importances_; send those to
+        # LinearExplainer so a logistic-regression win model stays explainable.
         if hasattr(base, "coef_") and not hasattr(base, "feature_importances_"):
             if preprocessor is None or background_X is None:
                 print(f"  [WARN] No background data for LinearExplainer on "
@@ -1155,16 +1154,14 @@ def _select_candidate(
     eligible: list[CandidateResult],
 ) -> tuple[CandidateResult, dict]:
     """
-    Pick the production model with a one-standard-error rule on cross-validated
-    AUC instead of the raw held-out AUC.
+    Pick the model using a one-standard-error rule on cross-validated AUC rather
+    than the raw test-split AUC.
 
-    The top candidates' held-out AUCs differ by less than the CV standard error,
-    so taking the literal argmax means selecting noise and produces an unstable,
-    run-to-run choice. The 1-SE rule keeps every candidate whose mean CV AUC is
-    within one standard error of the best candidate's mean, then breaks the tie
-    toward the simplest / cheapest model (MODEL_COMPLEXITY_RANK). This yields a
-    reproducible, operationally cheaper choice with no measurable performance
-    loss. Ties on complexity break on higher CV mean for determinism.
+    The top candidates' test AUCs differ by less than the CV standard error, so
+    picking the single best on the test split just tracks noise and changes from
+    run to run. Instead we keep every candidate within one SE of the best CV mean
+    and take the simplest of those (MODEL_COMPLEXITY_RANK). Same performance, more
+    stable choice. Complexity ties break on the higher CV mean.
     """
     def _mean(r: CandidateResult) -> float:
         return r.cv.get("auc_mean", float("nan"))
@@ -1365,7 +1362,7 @@ def main() -> None:
     # ── Build feature matrix (drop all excluded columns) ─────────────────
     if EXCLUDE_STATUS_PROXIES:
         print(
-            "\n[feature mode] EXCLUDE_STATUS_PROXIES=1 — dropping Status leakage "
+            "\n[feature mode] EXCLUDE_STATUS_PROXIES=1 - dropping Status leakage "
             f"proxies: {STATUS_PROXY_COLS}"
         )
     X = model_feature_frame(df, exclude_status_proxies=EXCLUDE_STATUS_PROXIES)
@@ -1434,13 +1431,12 @@ def main() -> None:
     }).sort_values("importance", ascending=False).to_csv(FEATURE_IMPORTANCE, index=False)
 
     # ── 5. Held-out predictions (for ROC / PR / threshold explorer in app) ─
-    # Two baselines are deliberately distinct:
-    #   * stored_baseline  — the generator's Rule_Based_Score, which folds in the
-    #     excluded Status field; kept for backward-compatible reporting.
-    #   * live_baseline    — baseline.score_frame(), the rules the API actually
-    #     serves (no Status). Ranking lift is measured against THIS one so the
-    #     "AI beats the rules" claim reflects the deployed comparison, not a
-    #     stronger rule set the production system never runs.
+    # Two baselines, on purpose:
+    #   stored_baseline - the generator's Rule_Based_Score, which includes the
+    #     excluded Status field. Kept so older reports still line up.
+    #   live_baseline   - baseline.score_frame(), the rules the API actually runs
+    #     (no Status). We measure ranking lift against this one so the comparison
+    #     matches what's deployed, not a stronger rule set we never ship.
     val_rows = df.loc[conv["val_idx"]]
     stored_baseline_val = (val_rows["Rule_Based_Score"] / 100).values
     live_baseline_val = (baseline.score_frame(val_rows) / 100).values
@@ -1451,8 +1447,7 @@ def main() -> None:
         "live_baseline_proba": live_baseline_val,
     }).to_csv(VAL_PREDICTIONS, index=False)
 
-    # Prioritisation KPIs: how many real converters the AI reaches vs the
-    # deployed rules at each top-K outreach budget (the number sales acts on).
+    # How many converters the AI reaches vs the deployed rules at each top-K cut.
     ranking = ranking_report(conv["val_y"], conv["val_proba"], live_baseline_val)
 
     # ── 6. Metrics JSON ───────────────────────────────────────────────────
@@ -1514,7 +1509,7 @@ def main() -> None:
             "exclude_status_proxies": bool(EXCLUDE_STATUS_PROXIES),
             "status_proxy_cols": STATUS_PROXY_COLS,
             "note": (
-                "Status leakage proxies excluded — uplift reflects real-data "
+                "Status leakage proxies excluded - uplift reflects real-data "
                 "signal." if EXCLUDE_STATUS_PROXIES else
                 "Default mode: Status leakage proxies retained; benchmark AUC is "
                 "inflated relative to real CRM data."

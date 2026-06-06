@@ -63,7 +63,7 @@ def build_pdf(headline_uplift: float, currency: str,
     doc = SimpleDocTemplate(buf, pagesize=A4,
                             leftMargin=18 * mm, rightMargin=18 * mm,
                             topMargin=14 * mm, bottomMargin=14 * mm,
-                            title="Enehano Lead Intelligence — Executive Summary")
+                            title="Enehano Lead Intelligence - Executive Summary")
     styles = getSampleStyleSheet()
     h_brand = ParagraphStyle("brand", parent=styles["Normal"], fontName="Helvetica-Bold",
                              fontSize=10, textColor=MUTED, spaceAfter=2)
@@ -82,10 +82,10 @@ def build_pdf(headline_uplift: float, currency: str,
                                     textColor=MUTED, alignment=1, spaceAfter=8)
 
     story = []
-    story.append(Paragraph("ENEHANO · LEAD INTELLIGENCE", h_brand))
+    story.append(Paragraph("ENEHANO - LEAD INTELLIGENCE", h_brand))
     story.append(Paragraph("Executive summary", h_title))
     story.append(Paragraph(
-        f"Generated {datetime.now():%d %B %Y, %H:%M} · "
+        f"Generated {datetime.now():%d %B %Y, %H:%M} - "
         f"Based on {total_leads:,} scored leads.", h_sub))
 
     headline_box = Table(

@@ -1,29 +1,29 @@
 """
-Enehano Solutions — B2B Lead Scoring Dataset Generator
+Enehano Solutions - B2B Lead Scoring Dataset Generator
 =======================================================
 Reads the CZSO RES open-data CSV (res_open_data_sample.csv) and produces a
 Salesforce-ready lead_train.csv for two-stage funnel model training.
 
-Causal model architecture — Stage 1 (Lead → Opportunity):
+Causal model architecture - Stage 1 (Lead -> Opportunity):
   Conversion probability is a sigmoid over an additive logit composed of:
-    → Industry attractiveness (CZ-NACE section)     — base_conv per section
-    → Company size tier                              — size_logit lookup
-    → Czech region premium (Praha / Jihomoravský)    — REGIONS table
-    → Lead-source quality                            — LEAD_SOURCES quality score
-    → Pipeline status                                — STATUS_LOGIT lookup
-    → Behavioral engagement signals                  — web visits, email, demos…
-    → Company age & legal form                       — maturity / entity type
-    → Gaussian noise                                 — unobserved confounders
+    -> Industry attractiveness (CZ-NACE section)     - base_conv per section
+    -> Company size tier                              - size_logit lookup
+    -> Czech region premium (Praha / Jihomoravský)    - REGIONS table
+    -> Lead-source quality                            - LEAD_SOURCES quality score
+    -> Pipeline status                                - STATUS_LOGIT lookup
+    -> Behavioral engagement signals                  - web visits, email, demos...
+    -> Company age & legal form                       - maturity / entity type
+    -> Gaussian noise                                 - unobserved confounders
 
-Causal model architecture — Stage 2 (Opportunity → Closed Deal):
+Causal model architecture - Stage 2 (Opportunity -> Closed Deal):
   Win probability is an additive linear model applied ONLY to converted leads:
-    → Base win rate                                  — WIN_PROBABILITY_BASE (0.15)
-    → Meetings held                                  — +0.05 per meeting
-    → Proposal sent                                  — +0.20 if True
-    → Lead rating                                    — +0.10 Hot / −0.10 Cold
-    → Time to first response                         — +0.08 if < 2 h
-    → Rule-based score                               — (score / 100) × 0.10
-    → Probability clipped to [0.01, 0.95] before Bernoulli draw
+    -> Base win rate                                  - WIN_PROBABILITY_BASE (0.15)
+    -> Meetings held                                  - +0.05 per meeting
+    -> Proposal sent                                  - +0.20 if True
+    -> Lead rating                                    - +0.10 Hot / −0.10 Cold
+    -> Time to first response                         - +0.08 if < 2 h
+    -> Rule-based score                               - (score / 100) x 0.10
+    -> Probability clipped to [0.01, 0.95] before Bernoulli draw
 
 Usage:
     python data_generator.py
@@ -48,7 +48,7 @@ SEED        = 42
 N_LEADS     = 30_000
 OUTPUT_FILE = str(LEAD_TRAIN)
 
-# Base win probability for Stage-2 causal model (Opportunity → Closed Deal).
+# Base win probability for Stage-2 causal model (Opportunity -> Closed Deal).
 # All feature contributions are added on top of this intercept before clipping.
 WIN_PROBABILITY_BASE: float = 0.15
 
@@ -59,7 +59,7 @@ random.seed(SEED)
 # 1. WEIGHTS DICTIONARIES  (edit here to tune causal model)
 # ──────────────────────────────────────────────────────────────────────────────
 
-# CZ-NACE 2025 section → Salesforce Industry + base conversion probability.
+# CZ-NACE 2025 section -> Salesforce Industry + base conversion probability.
 # base_conv reflects how attractive each sector is for Salesforce consulting.
 NACE_SECTIONS: dict[str, dict] = {
     "A": {"label": "Agriculture",                  "sf_industry": "Agriculture",    "base_conv": 0.04},
@@ -82,7 +82,7 @@ NACE_SECTIONS: dict[str, dict] = {
     "S": {"label": "Other Services",               "sf_industry": "Other",          "base_conv": 0.07},
 }
 
-# CZ-NACE 2025 sections not present in older Rev.2 → remap to nearest.
+# CZ-NACE 2025 sections not present in older Rev.2 -> remap to nearest.
 NACE_FALLBACK: dict[str, str] = {"T": "S", "U": "S", "V": "S"}
 
 # NUTS-3 regions: name, sampling weight, Praha premium flag.
@@ -103,10 +103,10 @@ REGIONS: dict[str, dict] = {
     "CZ080": {"name": "Moravskoslezský",   "weight": 0.08, "premium": False},
 }
 
-# RES size-category codes → EU SME band label + employee range.
+# RES size-category codes -> EU SME band label + employee range.
 # Keys match the raw integer codes in "Velikostní kategorie dle počtu zaměstnanců (kód)".
 RES_SIZE_MAP: dict[str, tuple[str, int, int]] = {
-    # code  → (band,        emp_lo, emp_hi)
+    # code  -> (band,        emp_lo, emp_hi)
     "110":  ("Micro",          1,     4),
     "120":  ("Micro",          5,     9),
     "210":  ("Small",         10,    19),
@@ -120,7 +120,7 @@ RES_SIZE_MAP: dict[str, tuple[str, int, int]] = {
     "350":  ("Enterprise",  5000,  9999),
 }
 
-# Size band → additive logit contribution (larger = more likely to convert).
+# Size band -> additive logit contribution (larger = more likely to convert).
 SIZE_LOGIT: dict[str, float] = {
     "Micro": -0.8, "Small": 0.0, "Medium": 0.5, "Large": 1.0, "Enterprise": 1.4,
 }
@@ -130,7 +130,7 @@ SIZE_CONV_MULT: dict[str, float] = {
     "Micro": 0.7, "Small": 1.0, "Medium": 1.3, "Large": 1.6, "Enterprise": 1.8,
 }
 
-# Legal-form name (from RES CSV) → internal code.
+# Legal-form name (from RES CSV) -> internal code.
 LEGAL_FORM_MAP: dict[str, str] = {
     "Společnost s ručením omezeným":                                    "112",
     "Společnost s ručením omezeným v likvidaci":                        "112",
@@ -195,7 +195,7 @@ STATUS_PROGRESS: dict[str, float] = {
     "Unqualified": 0.0, "Converted": 1.0,
 }
 
-# Status → additive logit contribution.
+# Status -> additive logit contribution.
 STATUS_LOGIT: dict[str, float] = {
     "New": -1.5, "Working": -0.5, "Contacted": 0.0,
     "Qualified": 1.8, "Nurturing": 0.2,
@@ -318,7 +318,7 @@ def parse_nace_section(raw: str) -> str:
         elif div <= 96:  sec = "S"
         else:            sec = "S"
 
-    # Apply 2025 → Rev.2 fallback, then ensure it's in our table
+    # Apply 2025 -> Rev.2 fallback, then ensure it's in our table
     sec = NACE_FALLBACK.get(sec, sec)
     return sec if sec in NACE_SECTIONS else "S"
 
@@ -328,7 +328,7 @@ def parse_res_row(row: pd.Series, current_year: int) -> dict:
     Extract and normalise all firmographic fields from one RES CSV row.
     Returns a clean dict consumed by generate_lead().
     """
-    # IČO — strip float artefact (.0), zero-pad to 8 digits
+    # IČO - strip float artefact (.0), zero-pad to 8 digits
     ico = str(row.get(RES_COL_ICO, "00000000")).split(".")[0].strip().zfill(8)
 
     # Company name
@@ -344,7 +344,7 @@ def parse_res_row(row: pd.Series, current_year: int) -> dict:
     # NACE section
     nace_section = parse_nace_section(str(row.get(RES_COL_NACE, "")))
 
-    # Employee count & size band — from RES size-category code
+    # Employee count & size band - from RES size-category code
     size_raw = str(row.get(RES_COL_SIZE, "")).split(".")[0].strip()
     if size_raw in RES_SIZE_MAP:
         band, emp_lo, emp_hi = RES_SIZE_MAP[size_raw]
@@ -358,7 +358,7 @@ def parse_res_row(row: pd.Series, current_year: int) -> dict:
     rpe     = REV_PER_EMPLOYEE.get(nace_section, REV_PER_EMPLOYEE["default"])
     annual_revenue = round(avg_emp * rpe * np.random.uniform(0.6, 1.4) / 1000, 2)
 
-    # Region — use real region name from RES if available, else sample
+    # Region - use real region name from RES if available, else sample
     region_raw = str(row.get(RES_COL_REGION, "")).strip()
     # Match RES region name to our REGIONS table (strip "kraj" suffix variations)
     region_code = None
@@ -417,7 +417,7 @@ def generate_behavioral_fields(lead_source: str, status: str, quality: float) ->
     """
     q = quality
 
-    # Web interactions: negative-binomial → heavy tail for engaged leads
+    # Web interactions: negative-binomial -> heavy tail for engaged leads
     web_interactions = int(clamp(
         np.random.negative_binomial(n=max(1, int(q * 5)), p=0.3),
         0, 200
@@ -484,7 +484,7 @@ def generate_behavioral_fields(lead_source: str, status: str, quality: float) ->
     }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 5. CAUSAL CONVERSION MODEL  (logit → sigmoid)
+# 5. CAUSAL CONVERSION MODEL  (logit -> sigmoid)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def compute_conversion_probability(
@@ -507,7 +507,7 @@ def compute_conversion_probability(
 
     # ── Industry base attractiveness ──────────────────────────────────────
     base = NACE_SECTIONS[nace_section]["base_conv"]
-    logit += np.log(base / (1 - base))           # base_conv → logit space
+    logit += np.log(base / (1 - base))           # base_conv -> logit space
 
     # ── Company size premium ──────────────────────────────────────────────
     logit += SIZE_LOGIT.get(size_band, 0.0)
@@ -526,27 +526,27 @@ def compute_conversion_probability(
     logit += STATUS_LOGIT.get(status, 0.0)
 
     # ── Behavioral engagement signals ─────────────────────────────────────
-    # Web interactions — log-scaled so diminishing returns apply
+    # Web interactions - log-scaled so diminishing returns apply
     logit += 0.4 * np.log1p(behavioral["Web_Interactions__c"])
 
-    # Email open rate — S-curve centred at 0.3 (industry average)
+    # Email open rate - S-curve centred at 0.3 (industry average)
     logit += 1.2 * (behavioral["Email_Open_Rate__c"] - 0.3)
 
-    # Demo request — strong buying-intent signal
+    # Demo request - strong buying-intent signal
     if behavioral["Demo_Requested__c"]:
         logit += 1.8
 
-    # Proposal sent — late-stage positive signal
+    # Proposal sent - late-stage positive signal
     if behavioral["Proposal_Sent__c"]:
         logit += 1.5
 
-    # Meetings held — capped at 5 to limit leverage
+    # Meetings held - capped at 5 to limit leverage
     logit += 0.4 * min(behavioral["Meetings_Held__c"], 5)
 
-    # Time to first response — penalty for slow SDR reaction
+    # Time to first response - penalty for slow SDR reaction
     logit -= 0.3 * np.log1p(behavioral["Time_to_First_Response_h__c"] / 4)
 
-    # Days since last activity — recency penalty, capped at 90 days
+    # Days since last activity - recency penalty, capped at 90 days
     logit -= 0.02 * min(behavioral["Days_Since_Last_Activity__c"], 90)
 
     # ── Company maturity ──────────────────────────────────────────────────
@@ -554,9 +554,9 @@ def compute_conversion_probability(
     logit += 0.1 * min(company_age, 20) / 20.0
 
     # ── Legal form ────────────────────────────────────────────────────────
-    if legal_form_code in ("112", "121"):   # s.r.o. / a.s. — corporate buyers
+    if legal_form_code in ("112", "121"):   # s.r.o. / a.s. - corporate buyers
         logit += 0.3
-    elif legal_form_code == "101":          # OSVČ — sole trader, lower budget
+    elif legal_form_code == "101":          # OSVČ - sole trader, lower budget
         logit -= 0.4
 
     # ── Gaussian noise (unobserved confounders) ───────────────────────────
@@ -565,7 +565,7 @@ def compute_conversion_probability(
     return clamp(sigmoid(logit))
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 5b. CAUSAL WIN MODEL  (Stage 2: Opportunity → Closed Deal)
+# 5b. CAUSAL WIN MODEL  (Stage 2: Opportunity -> Closed Deal)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def compute_win_probability(
@@ -583,9 +583,9 @@ def compute_win_probability(
     ----------
     meetings_held          : number of meetings held with the prospect
     proposal_sent          : whether a formal proposal was delivered
-    rating                 : Salesforce lead rating — "Hot", "Warm", or "Cold"
+    rating                 : Salesforce lead rating - "Hot", "Warm", or "Cold"
     time_to_first_response : hours from lead creation to first SDR response
-    rule_based_score       : deterministic 0–100 score from compute_rule_based_score()
+    rule_based_score       : deterministic 0-100 score from compute_rule_based_score()
 
     Returns
     -------
@@ -602,7 +602,7 @@ def compute_win_probability(
     win_prob = WIN_PROBABILITY_BASE
 
     # Meetings held: each meeting adds a fixed probability increment.
-    # No cap is applied here — the clip at the end bounds the total.
+    # No cap is applied here - the clip at the end bounds the total.
     win_prob += meetings_held * 0.05
 
     # Proposal sent: strongest single signal of late-stage intent.
@@ -633,7 +633,7 @@ def compute_win_probability(
 
 def compute_rule_based_score(row: dict) -> int:
     """
-    Deterministic 0–100 lead score inspired by Salesforce Einstein/Pardot rubrics.
+    Deterministic 0-100 lead score inspired by Salesforce Einstein/Pardot rubrics.
     Used as a baseline to benchmark against the Random Forest model.
     """
     score = 0
@@ -697,8 +697,8 @@ def generate_lead(lead_id: int, firm: dict) -> dict:
 
     Parameters
     ----------
-    lead_id : sequential integer → Salesforce-style Lead_ID
-    firm    : dict from parse_res_row() — all real firmographic fields
+    lead_id : sequential integer -> Salesforce-style Lead_ID
+    firm    : dict from parse_res_row() - all real firmographic fields
     """
     # ── Salesforce standard fields ────────────────────────────────────────
     lead_source = sample_weighted(LEAD_SOURCES)
@@ -740,7 +740,7 @@ def generate_lead(lead_id: int, firm: dict) -> dict:
     days_in_pipeline = random.randint(*stage_days_range)
     last_activity    = min(created_date + timedelta(days=days_in_pipeline), END)
 
-    # ── Conversion probability → binary label ─────────────────────────────
+    # ── Conversion probability -> binary label ─────────────────────────────
     conv_prob = compute_conversion_probability(
         nace_section    = firm["nace_section"],
         size_band       = firm["size_band"],
@@ -813,7 +813,7 @@ def generate_lead(lead_id: int, firm: dict) -> dict:
         ),
         "Conversion_Probability":      round(conv_prob, 6),
 
-        # Win probability for Stage-2 model — computed for every row so the
+        # Win probability for Stage-2 model - computed for every row so the
         # column is always present; Closed_Won is generated in build_dataset()
         # via a single vectorised np.random.binomial call over converted rows.
         "Win_Probability__c":          round(
@@ -827,7 +827,7 @@ def generate_lead(lead_id: int, firm: dict) -> dict:
             6,
         ),
 
-        # TARGET — stage 1: Lead → Opportunity
+        # TARGET - stage 1: Lead -> Opportunity
         "Converted":                   converted,
     }
 
@@ -841,13 +841,13 @@ def build_dataset(res_filepath: str, n: int = N_LEADS) -> pd.DataFrame:
     Returns a DataFrame ready for export.
     """
     print(f"\n{'='*60}")
-    print(" Enehano Solutions — Lead Dataset Generator")
+    print(" Enehano Solutions - Lead Dataset Generator")
     print(f"{'='*60}\n")
 
     df_res      = load_res(res_filepath)
     sample_size = min(n, len(df_res))
     df_sample   = df_res.sample(sample_size, random_state=SEED).reset_index(drop=True)
-    print(f"  Generating {sample_size:,} leads from RES export …\n")
+    print(f"  Generating {sample_size:,} leads from RES export ...\n")
 
     current_year = datetime.now().year
     records = []
@@ -861,13 +861,13 @@ def build_dataset(res_filepath: str, n: int = N_LEADS) -> pd.DataFrame:
 
     # ── Stage-2 target: Closed_Won  ───────────────────────────────────────────
     # Business rule: a deal can only be won if the lead was first converted.
-    # For non-converted rows the win probability is irrelevant — Closed_Won is
+    # For non-converted rows the win probability is irrelevant - Closed_Won is
     # forced to 0.  For converted rows we draw from a Bernoulli distribution
     # whose parameter p comes from the per-row Win_Probability__c computed
     # inside generate_lead() via compute_win_probability().
     #
     # Using a vectorised np.random.binomial call (n=1 per element) over the
-    # full array is both faster than a Python loop and semantically correct —
+    # full array is both faster than a Python loop and semantically correct -
     # each row gets an independent Bernoulli draw with its own probability.
     win_probs = df["Win_Probability__c"].to_numpy()
     raw_draws = np.random.binomial(n=1, p=win_probs)           # shape (N,)
@@ -934,7 +934,7 @@ def print_quality_report(df: pd.DataFrame) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Enehano Solutions — B2B Lead Scoring Dataset Generator"
+        description="Enehano Solutions - B2B Lead Scoring Dataset Generator"
     )
     parser.add_argument(
         "--res", type=str, default=str(RES_SAMPLE),
@@ -956,5 +956,5 @@ if __name__ == "__main__":
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_path, index=False, encoding="utf-8-sig")
-    print(f"  Saved → {out_path.resolve()}")
+    print(f"  Saved -> {out_path.resolve()}")
     print(f"  Rows: {len(df):,}  |  Columns: {len(df.columns)}")

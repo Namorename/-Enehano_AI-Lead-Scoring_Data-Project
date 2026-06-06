@@ -1,24 +1,21 @@
 """
 api.py
 ======
-FastAPI scoring service — exposes the trained models over HTTP.
+FastAPI scoring service - exposes the trained models over HTTP.
 
 Explainability:
-  Per-lead top_drivers are computed from the conversion SHAP explainer
-  (local SHAP values, positive class). The explainer is loaded from disk
-  once at startup and reused across requests. Its concrete type depends on
-  the model selected during training (a TreeExplainer for tree backends such
-  as HistGradientBoosting, a LinearExplainer for linear ones); the explainer
-  is built on the *base* estimator while the served probability comes from a
-  CalibratedClassifierCV wrapper, so drivers explain the uncalibrated ranking.
-  Drivers are best-effort: if the explainer is missing or raises, scoring still
-  succeeds and top_drivers is returned empty.
+  top_drivers come from the conversion SHAP explainer (positive class), loaded
+  once at startup. Its type depends on the trained model (TreeExplainer for tree
+  models like HistGradientBoosting, LinearExplainer for linear ones). The
+  explainer is built on the base estimator, while the score comes from the
+  calibrated wrapper, so the drivers explain the uncalibrated ranking. If the
+  explainer is missing or fails, scoring still returns and top_drivers is empty.
 
 Column contract:
   - LeadInput uses Legal_Form_Label (string), NOT Legal_Form_Code (which is
     stored as string "112"/"121" in the CSV but is not a useful API input).
   - Region field maps to the 'Region_Name' / 'Region' column used by the model.
-  - All bool fields (Demo_Requested__c etc.) declared as int (0/1) — matches
+  - All bool fields (Demo_Requested__c etc.) declared as int (0/1) - matches
     the int dtype the preprocessor was trained on.
 
 Enrichment flow (/score/enrich):
@@ -62,11 +59,10 @@ from paths import (
 )
 
 # ── Auth ────────────────────────────────────────────────────────────────────
-# Optional API-key gate for the scoring routes. Salesforce (or any caller) sends
-# the key in the `X-API-Key` header; configure the matching value via the
-# SCORING_API_KEY env var on the host. When the env var is unset the check is a
-# no-op, so local development and in-process use stay frictionless. Set it before
-# exposing the service publicly (see docs/SALESFORCE_INTEGRATION.md §5).
+# Optional API key for the scoring routes. The caller sends it in the X-API-Key
+# header; set the expected value in the SCORING_API_KEY env var. If that var is
+# unset the check is skipped, so local runs need no key. Set it before exposing
+# the service publicly (see docs/SALESFORCE_INTEGRATION.md).
 SCORING_API_KEY = os.getenv("SCORING_API_KEY")
 
 
@@ -90,7 +86,7 @@ def _load_assets() -> None:
     ASSETS["conv_model"] = joblib.load(CONV_MODEL)
     ASSETS["conv_pre"]   = joblib.load(CONV_PRE)
     ASSETS["feat_names"] = joblib.load(CONV_FEAT)
-    # Pre-loaded TreeExplainer — built once at startup, reused for every request.
+    # Pre-loaded TreeExplainer - built once at startup, reused for every request.
     # shap.TreeExplainer.shap_values() is thread-safe for read-only inference.
     ASSETS["conv_expl"]  = joblib.load(CONV_EXPL)
     ASSETS["win_model"]  = joblib.load(WIN_MODEL)
@@ -115,7 +111,7 @@ ARES_CACHE: dict[str, dict] = {}
 # ── ARES lookup helpers ────────────────────────────────────────────────────────
 
 # Maps common Czech legal-form codes (pravniForma) to human-readable labels.
-# Unknown codes fall back gracefully to the raw code string.
+# Unknown codes fall back to the raw code string.
 _LEGAL_FORM_LABELS: dict[str, str] = {
     "101": "Fyzická osoba podnikající",
     "111": "Veřejná obchodní společnost",
@@ -237,7 +233,7 @@ def _fetch_ares(ico: str) -> dict:
             status_code=502,
             detail=(
                 f"ARES lookup failed for IČO '{normalised}'. "
-                "The registry may be temporarily unavailable — retry in a few seconds."
+                "The registry may be temporarily unavailable - retry in a few seconds."
             ),
         )
 
@@ -252,11 +248,11 @@ def _ares_to_firmographics(ares_data: dict) -> dict:
 
     Mapping decisions
     -----------------
-    legal_form  → Legal_Form_Code (raw code) + Legal_Form_Label (resolved label)
-    region      → Region_Name + Region_Code (via _REGION_CODE_MAP)
-    primary_nace→ CZ_NACE_Section + CZ_NACE_Section_Label (via _nace_to_section)
-    city        → used as Region_Name fallback when region is absent
-    registration_date → Founding_Year + Company_Age_Years (derived)
+    legal_form  -> Legal_Form_Code (raw code) + Legal_Form_Label (resolved label)
+    region      -> Region_Name + Region_Code (via _REGION_CODE_MAP)
+    primary_nace-> CZ_NACE_Section + CZ_NACE_Section_Label (via _nace_to_section)
+    city        -> used as Region_Name fallback when region is absent
+    registration_date -> Founding_Year + Company_Age_Years (derived)
 
     All fields carry safe defaults so scoring is never blocked by partial data.
     """
@@ -289,8 +285,8 @@ class LeadInput(BaseModel):
     Full set of Salesforce Lead fields required for model scoring.
 
     Field notes:
-    - Bool flags are int (0/1) — matches the int64 dtype from data_generator.py.
-    - Legal_Form_Code is a string category code — matches str dtype in CSV.
+    - Bool flags are int (0/1) - matches the int64 dtype from data_generator.py.
+    - Legal_Form_Code is a string category code - matches str dtype in CSV.
     - Region_Name is the actual CSV column name; 'Region' is an alias added
       at scoring time for compatibility with baseline.score_frame.
     """
@@ -310,7 +306,7 @@ class LeadInput(BaseModel):
     LeadSource:             str   = "Web"
     Rating:                 str   = "Warm"
     Owner:                  str   = "Martin Novák"
-    # Behavioral signals (bool flags as int — matches preprocessor)
+    # Behavioral signals (bool flags as int - matches preprocessor)
     Time_to_First_Response_h__c: float = 24.0
     Web_Interactions__c:         int   = 0
     Email_Opens__c:              int   = 0
@@ -339,7 +335,7 @@ class EnrichLeadInput(BaseModel):
     Thin frontend payload for the /score/enrich endpoint.
 
     The caller supplies only the company IČO and CRM/behavioral metrics.
-    All firmographic fields (NACE, region, legal form, founding year, …) are
+    All firmographic fields (NACE, region, legal form, founding year, ...) are
     resolved server-side by querying the ARES registry, so the frontend never
     needs to know about those fields.
 
@@ -348,7 +344,7 @@ class EnrichLeadInput(BaseModel):
     LeadSource, Rating, Owner) are kept here as optional inputs so callers
     can override the defaults when the data is already present in the CRM.
     """
-    # Company identifier — used to fetch firmographics from ARES.
+    # Company identifier - used to fetch firmographics from ARES.
     ico: str = Field(..., description="8-digit Czech company registration number (IČO).")
 
     # Salesforce CRM fields not covered by ARES (all optional with sensible defaults).
@@ -360,7 +356,7 @@ class EnrichLeadInput(BaseModel):
     Rating:                 str   = "Warm"
     Owner:                  str   = "Unknown"
 
-    # Behavioral / interaction signals (all optional — default to zero activity).
+    # Behavioral / interaction signals (all optional - default to zero activity).
     Time_to_First_Response_h__c: float = 24.0
     Web_Interactions__c:         int   = 0
     Email_Opens__c:              int   = 0
@@ -382,7 +378,7 @@ class EnrichLeadInput(BaseModel):
 class ScoreOutput(BaseModel):
     ai_score:         float     = Field(..., description="0-100 conversion probability score")
     segment:          str       = Field(..., description="High / Medium / Low")
-    expected_win_pct: float     = Field(..., description="Convert × Win as 0-100")
+    expected_win_pct: float     = Field(..., description="Convert x Win as 0-100")
     p_win_if_converted_pct: float = Field(..., description="0-100 probability of winning after conversion")
     rule_score:       int       = Field(..., description="Baseline rule-based score")
     top_drivers:      list[str] = Field(default_factory=list, description="Top 3 features pushing the score up")
@@ -437,13 +433,12 @@ def _positive_shap_row(shap_values, row_idx: int) -> np.ndarray:
 
 
 def _score_dataframe(df: pd.DataFrame, include_drivers: bool = True) -> list[ScoreOutput]:
-    # An empty frame has no columns, so the fitted ColumnTransformer would raise
-    # "columns are missing" instead of returning an empty result. Short-circuit
-    # before touching the preprocessor so callers get a clean [] for [] in.
+    # An empty frame has no columns, so the fitted ColumnTransformer raises
+    # "columns are missing". Return early so an empty input gives an empty result.
     if len(df) == 0:
         return []
 
-    # Add 'Region' alias so baseline.score_frame and any region-aware logic work.
+    # Add the 'Region' alias so baseline.score_frame works.
     df = add_region_alias(df)
     add_engineered_features(df)
 
@@ -457,21 +452,16 @@ def _score_dataframe(df: pd.DataFrame, include_drivers: bool = True) -> list[Sco
     feat_names = ASSETS["feat_names"]
     explainer = ASSETS.get("conv_expl")
     if include_drivers and explainer is not None:
-        # Local SHAP explanations are intentionally optional. They are useful
-        # for a single lead profile, but too expensive for 30k-row dashboard
-        # scoring where only numeric ranking fields are needed.
-        #
-        # The explainer is a TreeExplainer tied to the *base* estimator, while
-        # the served probabilities come from the calibrated wrapper. SHAP also
-        # has version-sensitive support for some tree backends (e.g.
-        # HistGradientBoosting). Neither should be able to fail the whole
-        # scoring request — drivers are a nice-to-have, the score is not — so we
-        # degrade to "no drivers" on any explainer error.
+        # Drivers are optional: useful for a single lead, too slow for scoring
+        # tens of thousands of rows. SHAP's support for some backends (e.g.
+        # HistGradientBoosting) varies by version, and the explainer is built on
+        # the base estimator rather than the calibrated wrapper. A failure here
+        # shouldn't sink the whole request, so on any error we just skip drivers.
         try:
             shap_vals = explainer.shap_values(X_conv, check_additivity=False)
-        except Exception as exc:  # noqa: BLE001 - drivers are best-effort
-            print(f"[WARN] SHAP driver computation failed, returning scores "
-                  f"without drivers: {type(exc).__name__}: {exc}")
+        except Exception as exc:
+            print(f"[WARN] SHAP drivers unavailable, returning scores without them: "
+                  f"{type(exc).__name__}: {exc}")
             shap_vals = None
 
     out: list[ScoreOutput] = []
@@ -513,7 +503,7 @@ def health() -> dict:
 @app.get("/metrics")
 def metrics_endpoint() -> dict:
     if not METRICS:
-        raise HTTPException(503, "metrics.json not available — run train.py first.")
+        raise HTTPException(503, "metrics.json not available - run train.py first.")
     return METRICS
 
 
@@ -537,7 +527,7 @@ def score_batch(payload: BatchInput) -> list[ScoreOutput]:
 @app.post("/score/enrich", response_model=ScoreOutput, dependencies=[Depends(require_api_key)])
 def score_enrich(payload: EnrichLeadInput) -> ScoreOutput:
     """
-    Thick-backend scoring endpoint — the caller supplies only an IČO and
+    Thick-backend scoring endpoint - the caller supplies only an IČO and
     behavioral metrics; firmographic data is resolved automatically.
 
     Flow
@@ -549,7 +539,7 @@ def score_enrich(payload: EnrichLeadInput) -> ScoreOutput:
     4. Merge firmographics with the caller-supplied CRM/behavioral fields to
        build a complete LeadInput, preserving the strict Pydantic contract.
     5. Pass the resulting single-row DataFrame to _score_dataframe() and return
-       the ScoreOutput — identical shape to the /score endpoint.
+       the ScoreOutput - identical shape to the /score endpoint.
 
     Raises 502 if the ARES registry is unreachable and the IČO is not cached.
     """
