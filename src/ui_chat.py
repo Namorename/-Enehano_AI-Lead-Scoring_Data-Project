@@ -255,6 +255,27 @@ _BUBBLE_INJECTOR = f"""
         style.textContent = `
             @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@700&display=swap');
 
+            /* Position chat dialog as a bottom-right floating panel */
+            div[data-testid="stDialog"] > div[role="dialog"] {{
+                position: fixed !important;
+                bottom: 100px !important; right: 24px !important;
+                top: auto !important; left: auto !important;
+                transform: none !important;
+                width: min(420px, 96vw) !important;
+                max-height: 78vh !important;
+                border-radius: 20px !important;
+                border: 1px solid #26303b !important;
+                box-shadow: 0 24px 64px rgba(0,0,0,0.55) !important;
+                overflow: hidden !important;
+            }}
+            @media (max-width: 480px) {{
+                div[data-testid="stDialog"] > div[role="dialog"] {{
+                    right: 0 !important; left: 0 !important; bottom: 0 !important;
+                    width: 100vw !important; max-height: 85vh !important;
+                    border-radius: 20px 20px 0 0 !important;
+                }}
+            }}
+
             .enehano-bubble {{
                 position: fixed;
                 right: 28px;
