@@ -10,7 +10,3 @@ fastapi>=0.110
 uvicorn[standard]>=0.27
 pydantic>=2.6
 reportlab>=4.0
-lightgbm>=4.0
-optuna>=3.6
-simple-salesforce>=1.12   # Salesforce REST/Bulk API client (sf_sync.py)
-python-dotenv>=1.0        # optional .env loading for sf_sync.py credentials
