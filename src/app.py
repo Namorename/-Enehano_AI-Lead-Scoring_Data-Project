@@ -403,6 +403,25 @@ st.markdown(
         .q-meta       {{ font-size: 14px; }}
         .stat-strip .s-lab {{ font-size: 12px; }}
         .chip         {{ font-size: 12px; padding: 4px 12px; }}
+
+        /* On mobile, the fixed bar IS the header — hide the desktop version */
+        .brand-head, .status {{ display: none !important; }}
+        /* Hide pill nav — replaced by drawer */
+        div[role="radiogroup"] {{ display: none !important; }}
+        /* Push page content below the 56px fixed bar */
+        section[data-testid="stMain"] .block-container {{ padding-top: 64px !important; }}
+        /* Remove top lime stripe — the fixed bar has brand identity */
+        .stApp {{ border-top: none !important; }}
+    }}
+
+    /* Hidden hamburger trigger buttons — in DOM but invisible, clicked by drawer JS */
+    .st-key-_nav_btn_today, .st-key-_nav_btn_swipe,
+    .st-key-_nav_btn_radar, .st-key-_nav_btn_all,
+    .st-key-_nav_btn_profile, .st-key-_nav_btn_managers {{
+        position: absolute !important;
+        width: 1px !important; height: 1px !important;
+        overflow: hidden !important; clip: rect(0 0 0 0) !important;
+        margin: -1px !important; padding: 0 !important; border: 0 !important;
     }}
     </style>
     """,
@@ -668,61 +687,194 @@ with h_right:
         unsafe_allow_html=True,
     )
 
+# ── Mobile hamburger drawer ───────────────────────────────────────────────────
+def _build_drawer_html(leads_count: int, active_nav: str) -> str:
+    """
+    Injects a fixed top bar (hamburger + wordmark) and a slide-in nav drawer
+    into the Streamlit parent document via window.parent.document manipulation.
+    Only visible on screens ≤ 640 px; hidden on desktop via media query.
+    Each drawer item clicks a corresponding hidden Streamlit button by CSS key.
+    """
+    css = r"""
+        #eh-mh {
+            position: fixed; top: 0; left: 0; right: 0; height: 56px;
+            background: #0e1520; border-bottom: 1px solid #26303b;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 16px; z-index: 99998;
+            font-family: -apple-system, BlinkMacSystemFont, 'DM Sans', sans-serif;
+        }
+        #eh-ham { background: none; border: none; color: #e8edf2; font-size: 22px;
+            cursor: pointer; padding: 8px; width: 44px; height: 44px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 8px; flex-shrink: 0; }
+        #eh-ham:active { background: #1a2230; }
+        #eh-wm { font-family: 'Space Grotesk', -apple-system, sans-serif;
+            font-size: 20px; font-weight: 700; color: #e8edf2;
+            cursor: pointer; letter-spacing: -0.5px; user-select: none; }
+        #eh-ov { position: fixed; inset: 0; background: rgba(0,0,0,0.62);
+            z-index: 99997; opacity: 0; pointer-events: none;
+            transition: opacity .25s ease; }
+        #eh-ov.open { opacity: 1; pointer-events: all; }
+        #eh-dr { position: fixed; top: 0; left: -290px; bottom: 0; width: 274px;
+            background: #0e1520; border-right: 1px solid #26303b;
+            z-index: 99999; transition: left .25s cubic-bezier(.4,0,.2,1);
+            display: flex; flex-direction: column; overflow-y: auto; }
+        #eh-dr.open { left: 0; }
+        .eh-dh { display: flex; align-items: center; justify-content: space-between;
+            padding: 15px 16px 12px;
+            border-bottom: 1px solid #26303b; }
+        .eh-dwm { font-family: 'Space Grotesk', -apple-system, sans-serif;
+            font-size: 20px; font-weight: 700; color: #e8edf2; letter-spacing: -0.5px; }
+        .eh-cl { background: none; border: none; color: #7a8898; font-size: 20px;
+            cursor: pointer; padding: 4px 8px; border-radius: 6px; line-height: 1; }
+        .eh-cl:active { background: #1a2230; }
+        .eh-nav { flex: 1; padding: 6px 0; }
+        .eh-ni { display: flex; flex-direction: column; align-items: flex-start;
+            width: 100%; background: none; border: none;
+            padding: 13px 20px; cursor: pointer; text-align: left;
+            border-left: 3px solid transparent;
+            font-family: -apple-system, 'DM Sans', sans-serif;
+            transition: background .1s ease; }
+        .eh-ni:active { background: rgba(166,206,57,0.07); }
+        .eh-ni.active { background: rgba(166,206,57,0.08); border-left-color: #a6ce39; }
+        .eh-nl { font-size: 16px; font-weight: 600; color: #e8edf2; }
+        .eh-ni.active .eh-nl { color: #a6ce39; }
+        .eh-nd { font-size: 12px; color: #7a8898; margin-top: 2px; }
+        .eh-df { padding: 16px 20px; border-top: 1px solid #26303b;
+            display: flex; flex-direction: column; gap: 4px; }
+        .eh-lc { font-size: 13px; color: #7a8898; }
+        .eh-li { font-size: 11px; color: #a6ce39; font-weight: 600; letter-spacing: .05em; }
+        @media (min-width: 641px) {
+            #eh-mh, #eh-dr, #eh-ov { display: none !important; }
+        }
+    """
+    screens = [
+        ("_nav_btn_today",   "Today",        "Your priority call queue"),
+        ("_nav_btn_swipe",   "Swipe",        "Quick card triage"),
+        ("_nav_btn_radar",   "Radar",        "Deals at risk and hidden gems"),
+        ("_nav_btn_all",     "All leads",    "Full ranked pipeline"),
+        ("_nav_btn_profile", "Lead profile", "One company in depth"),
+        ("_nav_btn_managers","For managers", "Revenue and model quality"),
+    ]
+    nav_items_js = "[" + ",".join(
+        f'["{k}","{lbl}","{desc}",{str(lbl == active_nav).lower()}]'
+        for k, lbl, desc in screens
+    ) + "]"
+
+    return f"""<script>
+(function() {{
+  const doc = window.parent.document;
+  ['eh-ms','eh-mh','eh-ov','eh-dr'].forEach(function(id) {{
+    const el = doc.getElementById(id); if (el) el.remove();
+  }});
+
+  const s = doc.createElement('style'); s.id = 'eh-ms';
+  s.textContent = {repr(css)};
+  doc.head.appendChild(s);
+
+  const mh = doc.createElement('div'); mh.id = 'eh-mh';
+  mh.innerHTML = '<button id="eh-ham" aria-label="Menu">&#9776;</button>'
+    + '<span id="eh-wm">enehano<span style="color:#a6ce39">.</span></span>'
+    + '<span style="width:44px"></span>';
+  doc.body.prepend(mh);
+
+  const ov = doc.createElement('div'); ov.id = 'eh-ov';
+  doc.body.appendChild(ov);
+
+  const screens = {nav_items_js};
+  const navHtml = screens.map(function(sc) {{
+    return '<button class="eh-ni' + (sc[3] ? ' active' : '')
+      + '" data-key="' + sc[0] + '"><span class="eh-nl">' + sc[1]
+      + '</span><span class="eh-nd">' + sc[2] + '</span></button>';
+  }}).join('');
+
+  const dr = doc.createElement('div'); dr.id = 'eh-dr';
+  dr.innerHTML = '<div class="eh-dh"><span class="eh-dwm">enehano'
+    + '<span style="color:#a6ce39">.</span></span>'
+    + '<button class="eh-cl" id="eh-cl">&#x2715;</button></div>'
+    + '<nav class="eh-nav">' + navHtml + '</nav>'
+    + '<div class="eh-df"><span class="eh-lc">{leads_count} leads ranked</span>'
+    + '<span class="eh-li">&#9679; Scoring live</span></div>';
+  doc.body.appendChild(dr);
+
+  function openDr()  {{ dr.classList.add('open'); ov.classList.add('open'); }}
+  function closeDr() {{ dr.classList.remove('open'); ov.classList.remove('open'); }}
+  function goTo(key) {{
+    const wrap = doc.querySelector('.st-key-' + key);
+    if (!wrap) return;
+    const btn = wrap.querySelector('button');
+    if (btn) {{ closeDr(); btn.click(); }}
+  }}
+
+  doc.getElementById('eh-ham').addEventListener('click', openDr);
+  doc.getElementById('eh-cl').addEventListener('click', closeDr);
+  ov.addEventListener('click', closeDr);
+  doc.getElementById('eh-wm').addEventListener('click', function() {{
+    goTo('_nav_btn_today');
+  }});
+  dr.querySelectorAll('.eh-ni').forEach(function(item) {{
+    item.addEventListener('click', function() {{ goTo(this.dataset.key); }});
+  }});
+}})();
+</script>"""
+
+
 # ── Swipe card HTML builder ───────────────────────────────────────────────────
 def _build_swipe_html(cards: list[dict], idx: int) -> str:
-    """Single-card HTML component for the Swipe screen with touch gesture support."""
+    """
+    Single-card display for the Swipe screen.
+    Touch drag shows visual feedback (tilt + colour overlay) but does NOT
+    navigate — the Streamlit Skip / Call buttons below are the reliable CTA.
+    A CSS slide-in animation plays each time the card changes.
+    """
     if not cards:
         return "<p style='color:#7a8898;text-align:center;padding:40px'>No leads.</p>"
-    idx    = max(0, min(idx, len(cards) - 1))
-    c      = cards[idx]
-    total  = len(cards)
-    at_end = idx >= total - 1
-    nxt    = min(idx + 1, total - 1)
+    idx_safe  = max(0, min(idx, len(cards) - 1))
+    c         = cards[idx_safe]
+    total     = len(cards)
+    at_end    = idx_safe >= total - 1
+    prog_note = " · All done — tap Reset to start over" if at_end else ""
 
-    drivers_html = "".join(
-        f"<span class='chip'>{d}</span>" for d in c["drivers"]
+    chips = "".join(
+        f"<span class='ch'>{d}</span>" for d in c["drivers"]
     )
-    call_url_js = (
-        f"setParam({nxt}, 'call')"  if not at_end else "setParam(0, 'reset')"
-    )
-    skip_url_js = (
-        f"setParam({nxt}, 'skip')" if not at_end else "setParam(0, 'reset')"
-    )
-    at_end_msg = " · Tap either button to restart" if at_end else ""
 
     return f"""<!doctype html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-*{{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}}
-body{{background:transparent;padding:0 4px;}}
+*{{box-sizing:border-box;margin:0;padding:0;
+   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}}
+body{{background:transparent;padding:0 2px;overflow:hidden;}}
+@keyframes slideIn{{from{{opacity:0;transform:translateX(32px)}}to{{opacity:1;transform:none}}}}
 .card{{background:#1a2230;border-radius:18px;padding:22px 18px 18px;
-       border:1.5px solid #2a3340;user-select:none;touch-action:pan-y;
-       position:relative;overflow:hidden;transition:transform .12s;}}
-.ch{{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}}
-.co{{font-size:19px;font-weight:700;color:#f0f4f8;line-height:1.25;}}
-.meta{{font-size:12px;color:#7a8898;margin-top:5px;}}
-.pill{{background:{c["color"]}22;color:{c["color"]};font-size:26px;font-weight:800;
-       border-radius:10px;padding:6px 12px;text-align:center;min-width:58px;flex-shrink:0;}}
+       border:1.5px solid #2a3340;position:relative;overflow:hidden;
+       animation:slideIn .22s cubic-bezier(.4,0,.2,1) both;
+       touch-action:pan-y;user-select:none;}}
+.row{{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}}
+.co{{font-size:18px;font-weight:700;color:#f0f4f8;line-height:1.25;}}
+.meta{{font-size:12px;color:#7a8898;margin-top:4px;}}
+.pill{{background:{c["color"]}22;color:{c["color"]};font-size:25px;font-weight:800;
+       border-radius:10px;padding:5px 11px;text-align:center;min-width:56px;flex-shrink:0;}}
 .seg{{font-size:10px;text-align:center;color:{c["color"]};font-weight:600;
-      letter-spacing:.05em;margin-top:4px;}}
-.div{{height:1px;background:#2a3340;margin:14px 0;}}
-.action{{color:#a6ce39;font-size:13px;font-weight:600;margin-bottom:10px;}}
-.chips{{display:flex;flex-wrap:wrap;gap:6px;}}
-.chip{{background:#1e2a1a;color:#a6ce39;border-radius:20px;padding:3px 10px;font-size:12px;}}
-.stats{{display:flex;gap:24px;margin-top:14px;}}
-.sn{{font-size:17px;font-weight:700;color:#f0f4f8;}}
+      letter-spacing:.05em;margin-top:3px;}}
+.hr{{height:1px;background:#2a3340;margin:13px 0;}}
+.why{{color:#a6ce39;font-size:13px;font-weight:600;margin-bottom:9px;}}
+.chips{{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px;}}
+.ch{{background:#1e2a1a;color:#a6ce39;border-radius:20px;padding:3px 9px;font-size:11px;}}
+.stats{{display:flex;gap:22px;}}
+.sn{{font-size:16px;font-weight:700;color:#f0f4f8;}}
 .sl{{font-size:10px;color:#7a8898;text-transform:uppercase;letter-spacing:.05em;}}
-.prog{{text-align:center;color:#7a8898;font-size:12px;margin-top:12px;}}
-.overlay{{position:absolute;inset:0;pointer-events:none;opacity:0;
-          display:flex;align-items:center;justify-content:center;
-          font-size:64px;border-radius:18px;transition:opacity .1s;}}
-.skip-ov{{background:rgba(255,75,75,.18);}}
-.call-ov{{background:rgba(166,206,57,.18);}}
+.prog{{text-align:center;color:#7a8898;font-size:12px;margin-top:11px;}}
+/* Drag feedback overlay — visual only, no navigation */
+.ov{{position:absolute;inset:0;pointer-events:none;opacity:0;
+     display:flex;align-items:center;justify-content:center;
+     font-size:60px;border-radius:18px;transition:opacity .08s;}}
+.ov-s{{background:rgba(226,92,92,.16);}} .ov-c{{background:rgba(166,206,57,.16);}}
 </style></head><body>
 <div class="card" id="card">
-  <div class="overlay skip-ov" id="ov-skip">✕</div>
-  <div class="overlay call-ov" id="ov-call">✓</div>
-  <div class="ch">
+  <div class="ov ov-s" id="ovs">✕</div>
+  <div class="ov ov-c" id="ovc">✓</div>
+  <div class="row">
     <div>
       <div class="co">{c["company"]}</div>
       <div class="meta">{c["industry"]} · {c["region"]} · {c["source"]}</div>
@@ -732,57 +884,39 @@ body{{background:transparent;padding:0 4px;}}
       <div class="seg">{c["segment"]}</div>
     </div>
   </div>
-  <div class="div"></div>
-  <div class="action">{c["action"]}</div>
-  <div class="chips">{drivers_html}</div>
+  <div class="hr"></div>
+  <div class="why">{c["action"]}</div>
+  <div class="chips">{chips}</div>
   <div class="stats">
     <div><div class="sn">{c["expected"]:.0f}%</div><div class="sl">exp win</div></div>
     <div><div class="sn">{c["rule"]}</div><div class="sl">rule score</div></div>
   </div>
-  <div class="prog">{idx + 1} / {total}{at_end_msg}</div>
+  <div class="prog">{idx_safe + 1} / {total}{prog_note}</div>
 </div>
 <script>
-const card   = document.getElementById('card');
-const ovSkip = document.getElementById('ov-skip');
-const ovCall = document.getElementById('ov-call');
-let sx = 0, sy = 0, active = false;
-
-function setParam(newIdx, action) {{
-  const url = new URL(window.parent.location.href);
-  url.searchParams.set('swi', newIdx);
-  if (action === 'call') url.searchParams.set('swi_action', 'call');
-  else url.searchParams.delete('swi_action');
-  window.parent.location.href = url.toString();
-}}
-
-card.addEventListener('touchstart', e => {{
-  sx = e.touches[0].clientX; sy = e.touches[0].clientY; active = true;
+const card = document.getElementById('card');
+const ovs  = document.getElementById('ovs');
+const ovc  = document.getElementById('ovc');
+let sx = 0, sy = 0, on = false;
+card.addEventListener('touchstart', function(e) {{
+  sx = e.touches[0].clientX; sy = e.touches[0].clientY; on = true;
 }}, {{passive: true}});
-
-card.addEventListener('touchmove', e => {{
-  if (!active) return;
-  const dx = e.touches[0].clientX - sx;
-  const dy = e.touches[0].clientY - sy;
-  if (Math.abs(dx) < Math.abs(dy)) return;
-  const t = Math.min(Math.abs(dx) / 120, 1);
-  if (dx < 0) {{
-    ovSkip.style.opacity = t * 0.9; ovCall.style.opacity = 0;
-    card.style.transform = 'translateX(' + (dx * 0.25) + 'px) rotate(' + (dx * 0.02) + 'deg)';
-  }} else {{
-    ovCall.style.opacity = t * 0.9; ovSkip.style.opacity = 0;
-    card.style.transform = 'translateX(' + (dx * 0.25) + 'px) rotate(' + (dx * 0.02) + 'deg)';
-  }}
+card.addEventListener('touchmove', function(e) {{
+  if (!on) return;
+  const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
+  if (Math.abs(dy) > Math.abs(dx)) return;
+  const t = Math.min(Math.abs(dx) / 110, 1);
+  const rot = dx * 0.018;
+  card.style.transform = 'translateX(' + dx * 0.22 + 'px) rotate(' + rot + 'deg)';
+  if (dx < 0) {{ ovs.style.opacity = t * 0.85; ovc.style.opacity = 0; }}
+  else        {{ ovc.style.opacity = t * 0.85; ovs.style.opacity = 0; }}
 }}, {{passive: true}});
-
-card.addEventListener('touchend', e => {{
-  if (!active) return;
-  active = false;
-  const dx = e.changedTouches[0].clientX - sx;
+card.addEventListener('touchend', function() {{
+  on = false;
+  card.style.transition = 'transform .18s ease';
   card.style.transform = '';
-  ovSkip.style.opacity = 0; ovCall.style.opacity = 0;
-  if (Math.abs(dx) > 80) {{
-    if (dx < 0) {{ {skip_url_js}; }} else {{ {call_url_js}; }}
-  }}
+  ovs.style.opacity = 0; ovc.style.opacity = 0;
+  setTimeout(function() {{ card.style.transition = ''; }}, 200);
 }});
 </script></body></html>"""
 
@@ -796,6 +930,25 @@ st.session_state.setdefault("nav", "Today")
 nav = st.radio("Navigation", SCREENS, key="nav",
                horizontal=True, label_visibility="collapsed")
 st.write("")
+
+# ── Mobile hamburger: hidden trigger buttons + drawer injector ────────────────
+# Each button key maps to a CSS class (.st-key-<key>) that the drawer JS finds.
+_NAV_ITEMS = [
+    ("Today",        "_nav_btn_today"),
+    ("Swipe",        "_nav_btn_swipe"),
+    ("Radar",        "_nav_btn_radar"),
+    ("All leads",    "_nav_btn_all"),
+    ("Lead profile", "_nav_btn_profile"),
+    ("For managers", "_nav_btn_managers"),
+]
+for _screen, _key in _NAV_ITEMS:
+    if st.button(_screen, key=_key):
+        st.session_state["_goto"] = _screen
+        st.rerun()
+
+from streamlit.components.v1 import html as _chtml  # noqa: E402
+_chtml(_build_drawer_html(leads_count=len(scored_df), active_nav=nav),
+       height=0, width=0)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -878,8 +1031,8 @@ elif nav == "Swipe":
     st.markdown("## Top leads")
     st.markdown(
         f"<p style='color:{MUTED};margin-top:-8px'>"
-        "Swipe right (or tap <b>Call</b>) to queue a lead, "
-        "swipe left (or tap <b>Skip</b>) to move on.</p>",
+        "Quick triage — tap <b>Call</b> to queue a lead or <b>Skip</b> to move on. "
+        "Drag the card to preview the decision.</p>",
         unsafe_allow_html=True,
     )
 
@@ -1010,6 +1163,12 @@ elif nav == "All leads":
 # SCREEN: Lead profile
 # ══════════════════════════════════════════════════════════════════════════════
 elif nav == "Lead profile":
+    st.markdown("## Lead profile")
+    st.markdown(
+        f"<p style='color:{MUTED};margin-top:-8px'>"
+        "One company in depth — score breakdown, key signals, and a live what-if simulator.</p>",
+        unsafe_allow_html=True,
+    )
     ranked = scored_df.sort_values("AI_Score", ascending=False)
     option_labels = {
         f"{r['Company_Name']}  ·  {r['AI_Score']:.0f}  ·  {r['IČO']}": r["IČO"]
