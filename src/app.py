@@ -373,6 +373,37 @@ st.markdown(
         /* Suppress the grey tap-flash on touch */
         * {{ -webkit-tap-highlight-color: transparent; }}
     }}
+
+    /* ── Logo container — lets CSS control the width ──────────────────── */
+    .logo-wrap {{ width: 190px; }}
+    .logo-wrap svg {{ width: 100%; height: auto; display: block; }}
+
+    /* ── Phone-specific tweaks (≤ 640px) — override some 768px rules ── */
+    @media (max-width: 640px) {{
+
+        /* Smaller logo on a phone */
+        .logo-wrap {{ width: 128px; }}
+
+        /* Nav: scroll horizontally instead of wrapping into a grid */
+        div[role="radiogroup"] {{
+            overflow-x: auto !important;
+            flex-wrap: nowrap !important;
+            justify-content: flex-start !important;
+            scrollbar-width: none !important;
+            -webkit-overflow-scrolling: touch;
+        }}
+        div[role="radiogroup"]::-webkit-scrollbar {{ display: none; }}
+        div[role="radiogroup"] label {{
+            white-space: nowrap !important;
+            flex-shrink: 0 !important;
+        }}
+
+        /* Bump up the smallest text — 11px is unreadable on a phone */
+        .eyebrow      {{ font-size: 13px; }}
+        .q-meta       {{ font-size: 14px; }}
+        .stat-strip .s-lab {{ font-size: 12px; }}
+        .chip         {{ font-size: 12px; padding: 4px 12px; }}
+    }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -592,13 +623,33 @@ if not _api_online and not EMBEDDED:
 
 scored_df = score_pipeline_via_api(master_df)
 
+# ── Swipe gesture callback: JS sets ?swi=<new_idx>, we read + clear it ───────
+_swi_raw = st.query_params.get("swi")
+if _swi_raw is not None:
+    try:
+        st.session_state["swipe_idx"] = int(_swi_raw)
+        if st.query_params.get("swi_action") == "call":
+            st.session_state.setdefault("swipe_called", set())
+            _prev_idx = st.session_state["swipe_idx"] - 1
+            _swipe_pool = (
+                scored_df.sort_values("AI_Score", ascending=False)
+                .head(20).reset_index(drop=True)
+            )
+            if 0 <= _prev_idx < len(_swipe_pool):
+                _ico = str(_swipe_pool.iloc[_prev_idx].get("IČO", ""))
+                if _ico:
+                    st.session_state["swipe_called"].add(_ico)
+    except (ValueError, TypeError):
+        pass
+    st.query_params.clear()
+
 
 # ── Header ────────────────────────────────────────────────────────────────────
-def _logo_html(width: int = 190) -> str:
-    """Inline the brand SVG so it renders crisply at any size, no file requests."""
+def _logo_html() -> str:
+    """Inline the brand SVG inside .logo-wrap so CSS controls the width."""
     if LOGO_SVG.exists():
         svg = LOGO_SVG.read_text(encoding="utf-8")
-        return f"<div style='width:{width}px'>{svg}</div>"
+        return f"<div class='logo-wrap'>{svg}</div>"
     return "<p class='wordmark'>enehano<span class='dot'>.</span></p>"
 
 
@@ -617,8 +668,127 @@ with h_right:
         unsafe_allow_html=True,
     )
 
+# ── Swipe card HTML builder ───────────────────────────────────────────────────
+def _build_swipe_html(cards: list[dict], idx: int) -> str:
+    """Single-card HTML component for the Swipe screen with touch gesture support."""
+    if not cards:
+        return "<p style='color:#7a8898;text-align:center;padding:40px'>No leads.</p>"
+    idx    = max(0, min(idx, len(cards) - 1))
+    c      = cards[idx]
+    total  = len(cards)
+    at_end = idx >= total - 1
+    nxt    = min(idx + 1, total - 1)
+
+    drivers_html = "".join(
+        f"<span class='chip'>{d}</span>" for d in c["drivers"]
+    )
+    call_url_js = (
+        f"setParam({nxt}, 'call')"  if not at_end else "setParam(0, 'reset')"
+    )
+    skip_url_js = (
+        f"setParam({nxt}, 'skip')" if not at_end else "setParam(0, 'reset')"
+    )
+    at_end_msg = " · Tap either button to restart" if at_end else ""
+
+    return f"""<!doctype html><html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}}
+body{{background:transparent;padding:0 4px;}}
+.card{{background:#1a2230;border-radius:18px;padding:22px 18px 18px;
+       border:1.5px solid #2a3340;user-select:none;touch-action:pan-y;
+       position:relative;overflow:hidden;transition:transform .12s;}}
+.ch{{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}}
+.co{{font-size:19px;font-weight:700;color:#f0f4f8;line-height:1.25;}}
+.meta{{font-size:12px;color:#7a8898;margin-top:5px;}}
+.pill{{background:{c["color"]}22;color:{c["color"]};font-size:26px;font-weight:800;
+       border-radius:10px;padding:6px 12px;text-align:center;min-width:58px;flex-shrink:0;}}
+.seg{{font-size:10px;text-align:center;color:{c["color"]};font-weight:600;
+      letter-spacing:.05em;margin-top:4px;}}
+.div{{height:1px;background:#2a3340;margin:14px 0;}}
+.action{{color:#a6ce39;font-size:13px;font-weight:600;margin-bottom:10px;}}
+.chips{{display:flex;flex-wrap:wrap;gap:6px;}}
+.chip{{background:#1e2a1a;color:#a6ce39;border-radius:20px;padding:3px 10px;font-size:12px;}}
+.stats{{display:flex;gap:24px;margin-top:14px;}}
+.sn{{font-size:17px;font-weight:700;color:#f0f4f8;}}
+.sl{{font-size:10px;color:#7a8898;text-transform:uppercase;letter-spacing:.05em;}}
+.prog{{text-align:center;color:#7a8898;font-size:12px;margin-top:12px;}}
+.overlay{{position:absolute;inset:0;pointer-events:none;opacity:0;
+          display:flex;align-items:center;justify-content:center;
+          font-size:64px;border-radius:18px;transition:opacity .1s;}}
+.skip-ov{{background:rgba(255,75,75,.18);}}
+.call-ov{{background:rgba(166,206,57,.18);}}
+</style></head><body>
+<div class="card" id="card">
+  <div class="overlay skip-ov" id="ov-skip">✕</div>
+  <div class="overlay call-ov" id="ov-call">✓</div>
+  <div class="ch">
+    <div>
+      <div class="co">{c["company"]}</div>
+      <div class="meta">{c["industry"]} · {c["region"]} · {c["source"]}</div>
+    </div>
+    <div>
+      <div class="pill">{c["score"]:.0f}</div>
+      <div class="seg">{c["segment"]}</div>
+    </div>
+  </div>
+  <div class="div"></div>
+  <div class="action">{c["action"]}</div>
+  <div class="chips">{drivers_html}</div>
+  <div class="stats">
+    <div><div class="sn">{c["expected"]:.0f}%</div><div class="sl">exp win</div></div>
+    <div><div class="sn">{c["rule"]}</div><div class="sl">rule score</div></div>
+  </div>
+  <div class="prog">{idx + 1} / {total}{at_end_msg}</div>
+</div>
+<script>
+const card   = document.getElementById('card');
+const ovSkip = document.getElementById('ov-skip');
+const ovCall = document.getElementById('ov-call');
+let sx = 0, sy = 0, active = false;
+
+function setParam(newIdx, action) {{
+  const url = new URL(window.parent.location.href);
+  url.searchParams.set('swi', newIdx);
+  if (action === 'call') url.searchParams.set('swi_action', 'call');
+  else url.searchParams.delete('swi_action');
+  window.parent.location.href = url.toString();
+}}
+
+card.addEventListener('touchstart', e => {{
+  sx = e.touches[0].clientX; sy = e.touches[0].clientY; active = true;
+}}, {{passive: true}});
+
+card.addEventListener('touchmove', e => {{
+  if (!active) return;
+  const dx = e.touches[0].clientX - sx;
+  const dy = e.touches[0].clientY - sy;
+  if (Math.abs(dx) < Math.abs(dy)) return;
+  const t = Math.min(Math.abs(dx) / 120, 1);
+  if (dx < 0) {{
+    ovSkip.style.opacity = t * 0.9; ovCall.style.opacity = 0;
+    card.style.transform = 'translateX(' + (dx * 0.25) + 'px) rotate(' + (dx * 0.02) + 'deg)';
+  }} else {{
+    ovCall.style.opacity = t * 0.9; ovSkip.style.opacity = 0;
+    card.style.transform = 'translateX(' + (dx * 0.25) + 'px) rotate(' + (dx * 0.02) + 'deg)';
+  }}
+}}, {{passive: true}});
+
+card.addEventListener('touchend', e => {{
+  if (!active) return;
+  active = false;
+  const dx = e.changedTouches[0].clientX - sx;
+  card.style.transform = '';
+  ovSkip.style.opacity = 0; ovCall.style.opacity = 0;
+  if (Math.abs(dx) > 80) {{
+    if (dx < 0) {{ {skip_url_js}; }} else {{ {call_url_js}; }}
+  }}
+}});
+</script></body></html>"""
+
+
 # ── Navigation (session-state driven so screens can hand off to each other) ──
-SCREENS = ["Today", "Radar", "All leads", "Lead profile", "For managers"]
+SCREENS = ["Today", "Swipe", "Radar", "All leads", "Lead profile", "For managers"]
 if "_goto" in st.session_state:
     st.session_state["nav"] = st.session_state.pop("_goto")
 st.session_state.setdefault("nav", "Today")
@@ -695,6 +865,76 @@ if nav == "Today":
     with mid:
         if st.button("See all leads", type="primary", use_container_width=True):
             st.session_state["_goto"] = "All leads"
+            st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SCREEN: Swipe — one card at a time with touch gesture support
+# ══════════════════════════════════════════════════════════════════════════════
+elif nav == "Swipe":
+    from streamlit.components.v1 import html as _sv_html
+    from ui_cards import _row_to_card as _to_card
+
+    st.markdown("## Top leads")
+    st.markdown(
+        f"<p style='color:{MUTED};margin-top:-8px'>"
+        "Swipe right (or tap <b>Call</b>) to queue a lead, "
+        "swipe left (or tap <b>Skip</b>) to move on.</p>",
+        unsafe_allow_html=True,
+    )
+
+    pool = (
+        scored_df.sort_values("AI_Score", ascending=False)
+        .head(20).reset_index(drop=True)
+    )
+
+    if pool.empty:
+        st.info("No scored leads available.")
+    else:
+        cards = [_to_card(r) for _, r in pool.iterrows()]
+
+        st.session_state.setdefault("swipe_idx", 0)
+        st.session_state.setdefault("swipe_called", set())
+
+        sw_idx = int(st.session_state["swipe_idx"])
+        if sw_idx >= len(cards):
+            sw_idx = 0
+            st.session_state["swipe_idx"] = 0
+
+        _sv_html(_build_swipe_html(cards, sw_idx), height=440, scrolling=False)
+
+        col_skip, col_call = st.columns(2)
+        with col_skip:
+            if st.button("← Skip", use_container_width=True, key="swipe_skip_btn"):
+                st.session_state["swipe_idx"] = min(sw_idx + 1, len(cards) - 1)
+                st.rerun()
+        with col_call:
+            if st.button("📞 Call this lead", use_container_width=True,
+                         type="primary", key="swipe_call_btn"):
+                st.session_state["swipe_called"].add(cards[sw_idx]["ico"])
+                st.session_state["swipe_idx"] = min(sw_idx + 1, len(cards) - 1)
+                st.toast(f"Queued: {cards[sw_idx]['company']}", icon="✓")
+                st.rerun()
+
+        called_count = len(st.session_state["swipe_called"])
+        if called_count:
+            st.markdown(
+                f"<p style='text-align:center;color:{LIME};font-size:13px;"
+                f"margin-top:6px'>"
+                f"{called_count} lead{'s' if called_count > 1 else ''} queued for a call"
+                "</p>",
+                unsafe_allow_html=True,
+            )
+
+        st.write("")
+        if st.button("Open full profile", use_container_width=True, key="swipe_open_btn"):
+            st.session_state["selected_ico"] = cards[sw_idx]["ico"]
+            st.session_state["_goto"] = "Lead profile"
+            st.rerun()
+
+        if st.button("Reset deck", use_container_width=True, key="swipe_reset_btn"):
+            st.session_state["swipe_idx"] = 0
+            st.session_state["swipe_called"] = set()
             st.rerun()
 
 
