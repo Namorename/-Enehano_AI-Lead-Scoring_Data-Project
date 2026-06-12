@@ -404,24 +404,108 @@ st.markdown(
         .stat-strip .s-lab {{ font-size: 12px; }}
         .chip         {{ font-size: 12px; padding: 4px 12px; }}
 
-        /* On mobile, the fixed bar IS the header — hide the desktop version */
-        .brand-head, .status {{ display: none !important; }}
-        /* Hide pill nav — replaced by drawer */
-        div[role="radiogroup"] {{ display: none !important; }}
-        /* Push page content below the 56px fixed bar */
-        section[data-testid="stMain"] .block-container {{ padding-top: 64px !important; }}
-        /* Remove top lime stripe — the fixed bar has brand identity */
+        /* Push content below the fixed mobile top bar */
+        section[data-testid="stMain"] .block-container {{ padding-top: 68px !important; }}
         .stApp {{ border-top: none !important; }}
+        /* Hide desktop chrome that duplicates the mobile bar */
+        .brand-head, .status {{ display: none !important; }}
+        div[role="radiogroup"] {{ display: none !important; }}
+        /* Mobile bar + drawer: switch from display:none to visible */
+        .mob-hdr    {{ display: flex !important; }}
+        .mob-ov     {{ display: block !important; }}
+        .mob-drawer {{ display: flex !important; }}
     }}
 
-    /* Hidden hamburger trigger buttons — in DOM but invisible, clicked by drawer JS */
-    .st-key-_nav_btn_today, .st-key-_nav_btn_swipe,
-    .st-key-_nav_btn_radar, .st-key-_nav_btn_all,
-    .st-key-_nav_btn_profile, .st-key-_nav_btn_managers {{
-        position: absolute !important;
-        width: 1px !important; height: 1px !important;
-        overflow: hidden !important; clip: rect(0 0 0 0) !important;
-        margin: -1px !important; padding: 0 !important; border: 0 !important;
+    /* ── Mobile top bar + drawer ─────────────────────────────────────── */
+    /* Hidden checkbox that drives the drawer open/close */
+    .mob-tgl {{ display: none !important; }}
+
+    /* Fixed top bar (mobile only — hidden by default, shown at ≤640px) */
+    .mob-hdr {{
+        display: none;
+        position: fixed; top: 0; left: 0; right: 0; height: 56px;
+        background: #0e1520; border-bottom: 1px solid {BORDER};
+        align-items: center; justify-content: space-between;
+        padding: 0 16px; z-index: 9000;
+    }}
+    .mob-ham {{
+        font-size: 24px; color: {INK}; text-decoration: none;
+        width: 44px; height: 44px; display: flex; align-items: center;
+        justify-content: center; border-radius: 8px; flex-shrink: 0;
+        cursor: pointer; -webkit-tap-highlight-color: transparent;
+        /* label element — no button styles needed */
+        background: none; border: none; padding: 0;
+    }}
+    .mob-ham:active {{ background: #1a2230; }}
+    .mob-wm {{
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 20px; font-weight: 700; color: {INK};
+        letter-spacing: -0.5px; text-decoration: none;
+    }}
+    .mob-dot {{ color: {LIME}; }}
+
+    /* Dim backdrop — visible when drawer is open */
+    .mob-ov {{
+        display: none;
+        position: fixed; inset: 0; background: rgba(0,0,0,0.62);
+        z-index: 8998; opacity: 0; pointer-events: none;
+        transition: opacity .25s ease;
+    }}
+    /* Slide-in drawer */
+    .mob-drawer {{
+        display: none;
+        position: fixed; top: 0; left: -292px; bottom: 0; width: 276px;
+        background: #0e1520; border-right: 1px solid {BORDER};
+        z-index: 8999; flex-direction: column; overflow-y: auto;
+        transition: left .25s cubic-bezier(.4,0,.2,1);
+    }}
+    /* Drawer header row */
+    .mob-dh {{
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 15px 16px 12px; border-bottom: 1px solid {BORDER};
+    }}
+    .mob-dwm {{
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 20px; font-weight: 700; color: {INK}; letter-spacing: -0.5px;
+    }}
+    .mob-cl {{
+        font-size: 22px; color: {MUTED}; text-decoration: none;
+        padding: 4px 8px; border-radius: 6px; cursor: pointer;
+        background: none; border: none;
+        -webkit-tap-highlight-color: transparent;
+    }}
+    .mob-cl:active {{ background: #1a2230; }}
+    /* Nav item links inside the drawer */
+    .mob-nav {{ flex: 1; padding: 6px 0; display: flex; flex-direction: column; }}
+    .mob-ni {{
+        display: flex; flex-direction: column; align-items: flex-start;
+        padding: 13px 20px; border-left: 3px solid transparent;
+        text-decoration: none; transition: background .1s ease;
+        -webkit-tap-highlight-color: transparent;
+    }}
+    .mob-ni:active {{ background: rgba(166,206,57,0.07); }}
+    .mob-ni-active {{
+        background: rgba(166,206,57,0.08);
+        border-left-color: {LIME};
+    }}
+    .mob-nl {{ font-size: 16px; font-weight: 600; color: {INK}; }}
+    .mob-ni-active .mob-nl {{ color: {LIME}; }}
+    .mob-nd {{ font-size: 12px; color: {MUTED}; margin-top: 2px; }}
+    /* Drawer footer */
+    .mob-df {{
+        padding: 16px 20px; border-top: 1px solid {BORDER};
+        display: flex; flex-direction: column; gap: 4px;
+    }}
+    .mob-lc {{ font-size: 13px; color: {MUTED}; }}
+    .mob-li {{ font-size: 11px; color: {LIME}; font-weight: 600; letter-spacing: .05em; }}
+
+    /* CSS toggle: when checkbox is checked, slide drawer + show overlay */
+    .mob-tgl:checked ~ .mob-ov    {{ opacity: 1; pointer-events: all; }}
+    .mob-tgl:checked ~ .mob-drawer {{ left: 0; }}
+
+    /* Desktop: never show mobile elements */
+    @media (min-width: 641px) {{
+        .mob-hdr, .mob-ov, .mob-drawer {{ display: none !important; }}
     }}
     </style>
     """,
@@ -662,6 +746,13 @@ if _swi_raw is not None:
         pass
     st.query_params.clear()
 
+# ── Mobile nav: ?_nav=<screen> → set session nav, avoid full reload ───────────
+_nav_param = st.query_params.get("_nav")
+if _nav_param and _nav_param in ["Today", "Swipe", "Radar", "All leads",
+                                  "Lead profile", "For managers"]:
+    st.session_state["nav"] = _nav_param
+    del st.query_params["_nav"]
+
 
 # ── Header ────────────────────────────────────────────────────────────────────
 def _logo_html() -> str:
@@ -687,137 +778,46 @@ with h_right:
         unsafe_allow_html=True,
     )
 
-# ── Mobile hamburger drawer ───────────────────────────────────────────────────
-def _build_drawer_html(leads_count: int, active_nav: str) -> str:
-    """
-    Injects a fixed top bar (hamburger + wordmark) and a slide-in nav drawer
-    into the Streamlit parent document via window.parent.document manipulation.
-    Only visible on screens ≤ 640 px; hidden on desktop via media query.
-    Each drawer item clicks a corresponding hidden Streamlit button by CSS key.
-    """
-    css = r"""
-        #eh-mh {
-            position: fixed; top: 0; left: 0; right: 0; height: 56px;
-            background: #0e1520; border-bottom: 1px solid #26303b;
-            display: flex; align-items: center; justify-content: space-between;
-            padding: 0 16px; z-index: 99998;
-            font-family: -apple-system, BlinkMacSystemFont, 'DM Sans', sans-serif;
-        }
-        #eh-ham { background: none; border: none; color: #e8edf2; font-size: 22px;
-            cursor: pointer; padding: 8px; width: 44px; height: 44px;
-            display: flex; align-items: center; justify-content: center;
-            border-radius: 8px; flex-shrink: 0; }
-        #eh-ham:active { background: #1a2230; }
-        #eh-wm { font-family: 'Space Grotesk', -apple-system, sans-serif;
-            font-size: 20px; font-weight: 700; color: #e8edf2;
-            cursor: pointer; letter-spacing: -0.5px; user-select: none; }
-        #eh-ov { position: fixed; inset: 0; background: rgba(0,0,0,0.62);
-            z-index: 99997; opacity: 0; pointer-events: none;
-            transition: opacity .25s ease; }
-        #eh-ov.open { opacity: 1; pointer-events: all; }
-        #eh-dr { position: fixed; top: 0; left: -290px; bottom: 0; width: 274px;
-            background: #0e1520; border-right: 1px solid #26303b;
-            z-index: 99999; transition: left .25s cubic-bezier(.4,0,.2,1);
-            display: flex; flex-direction: column; overflow-y: auto; }
-        #eh-dr.open { left: 0; }
-        .eh-dh { display: flex; align-items: center; justify-content: space-between;
-            padding: 15px 16px 12px;
-            border-bottom: 1px solid #26303b; }
-        .eh-dwm { font-family: 'Space Grotesk', -apple-system, sans-serif;
-            font-size: 20px; font-weight: 700; color: #e8edf2; letter-spacing: -0.5px; }
-        .eh-cl { background: none; border: none; color: #7a8898; font-size: 20px;
-            cursor: pointer; padding: 4px 8px; border-radius: 6px; line-height: 1; }
-        .eh-cl:active { background: #1a2230; }
-        .eh-nav { flex: 1; padding: 6px 0; }
-        .eh-ni { display: flex; flex-direction: column; align-items: flex-start;
-            width: 100%; background: none; border: none;
-            padding: 13px 20px; cursor: pointer; text-align: left;
-            border-left: 3px solid transparent;
-            font-family: -apple-system, 'DM Sans', sans-serif;
-            transition: background .1s ease; }
-        .eh-ni:active { background: rgba(166,206,57,0.07); }
-        .eh-ni.active { background: rgba(166,206,57,0.08); border-left-color: #a6ce39; }
-        .eh-nl { font-size: 16px; font-weight: 600; color: #e8edf2; }
-        .eh-ni.active .eh-nl { color: #a6ce39; }
-        .eh-nd { font-size: 12px; color: #7a8898; margin-top: 2px; }
-        .eh-df { padding: 16px 20px; border-top: 1px solid #26303b;
-            display: flex; flex-direction: column; gap: 4px; }
-        .eh-lc { font-size: 13px; color: #7a8898; }
-        .eh-li { font-size: 11px; color: #a6ce39; font-weight: 600; letter-spacing: .05em; }
-        @media (min-width: 641px) {
-            #eh-mh, #eh-dr, #eh-ov { display: none !important; }
-        }
-    """
-    screens = [
-        ("_nav_btn_today",   "Today",        "Your priority call queue"),
-        ("_nav_btn_swipe",   "Swipe",        "Quick card triage"),
-        ("_nav_btn_radar",   "Radar",        "Deals at risk and hidden gems"),
-        ("_nav_btn_all",     "All leads",    "Full ranked pipeline"),
-        ("_nav_btn_profile", "Lead profile", "One company in depth"),
-        ("_nav_btn_managers","For managers", "Revenue and model quality"),
-    ]
-    nav_items_js = "[" + ",".join(
-        f'["{k}","{lbl}","{desc}",{str(lbl == active_nav).lower()}]'
-        for k, lbl, desc in screens
-    ) + "]"
-
-    return f"""<script>
-(function() {{
-  const doc = window.parent.document;
-  ['eh-ms','eh-mh','eh-ov','eh-dr'].forEach(function(id) {{
-    const el = doc.getElementById(id); if (el) el.remove();
-  }});
-
-  const s = doc.createElement('style'); s.id = 'eh-ms';
-  s.textContent = {repr(css)};
-  doc.head.appendChild(s);
-
-  const mh = doc.createElement('div'); mh.id = 'eh-mh';
-  mh.innerHTML = '<button id="eh-ham" aria-label="Menu">&#9776;</button>'
-    + '<span id="eh-wm">enehano<span style="color:#a6ce39">.</span></span>'
-    + '<span style="width:44px"></span>';
-  doc.body.prepend(mh);
-
-  const ov = doc.createElement('div'); ov.id = 'eh-ov';
-  doc.body.appendChild(ov);
-
-  const screens = {nav_items_js};
-  const navHtml = screens.map(function(sc) {{
-    return '<button class="eh-ni' + (sc[3] ? ' active' : '')
-      + '" data-key="' + sc[0] + '"><span class="eh-nl">' + sc[1]
-      + '</span><span class="eh-nd">' + sc[2] + '</span></button>';
-  }}).join('');
-
-  const dr = doc.createElement('div'); dr.id = 'eh-dr';
-  dr.innerHTML = '<div class="eh-dh"><span class="eh-dwm">enehano'
-    + '<span style="color:#a6ce39">.</span></span>'
-    + '<button class="eh-cl" id="eh-cl">&#x2715;</button></div>'
-    + '<nav class="eh-nav">' + navHtml + '</nav>'
-    + '<div class="eh-df"><span class="eh-lc">{leads_count} leads ranked</span>'
-    + '<span class="eh-li">&#9679; Scoring live</span></div>';
-  doc.body.appendChild(dr);
-
-  function openDr()  {{ dr.classList.add('open'); ov.classList.add('open'); }}
-  function closeDr() {{ dr.classList.remove('open'); ov.classList.remove('open'); }}
-  function goTo(key) {{
-    const wrap = doc.querySelector('.st-key-' + key);
-    if (!wrap) return;
-    const btn = wrap.querySelector('button');
-    if (btn) {{ closeDr(); btn.click(); }}
-  }}
-
-  doc.getElementById('eh-ham').addEventListener('click', openDr);
-  doc.getElementById('eh-cl').addEventListener('click', closeDr);
-  ov.addEventListener('click', closeDr);
-  doc.getElementById('eh-wm').addEventListener('click', function() {{
-    goTo('_nav_btn_today');
-  }});
-  dr.querySelectorAll('.eh-ni').forEach(function(item) {{
-    item.addEventListener('click', function() {{ goTo(this.dataset.key); }});
-  }});
-}})();
-</script>"""
-
+# ── Mobile top bar + drawer (pure HTML/CSS, no iframes) ───────────────────────
+# Only visible at ≤640px (CSS controls this). Uses a hidden checkbox for
+# the open/close toggle (pure CSS, zero JS needed). Nav items are <a href>
+# links that set ?_nav=<screen> — handled above at startup.
+_SCREENS_META = [
+    ("Today",        "Your priority call queue"),
+    ("Swipe",        "Quick card triage"),
+    ("Radar",        "Deals at risk and hidden gems"),
+    ("All leads",    "Full ranked pipeline"),
+    ("Lead profile", "One company in depth"),
+    ("For managers", "Revenue and model quality"),
+]
+_mob_nav_items = "".join(
+    f"<a href='?_nav={s}' class='mob-ni{' mob-ni-active' if s == st.session_state.get('nav','Today') else ''}'>"
+    f"<span class='mob-nl'>{s}</span><span class='mob-nd'>{d}</span></a>"
+    for s, d in _SCREENS_META
+)
+st.markdown(
+    f"""
+    <input type="checkbox" id="mob-tgl" class="mob-tgl">
+    <div class="mob-hdr">
+      <label for="mob-tgl" class="mob-ham" aria-label="Open navigation">&#9776;</label>
+      <a href="?_nav=Today" class="mob-wm">enehano<span class="mob-dot">.</span></a>
+      <span style="width:44px;flex-shrink:0"></span>
+    </div>
+    <label for="mob-tgl" class="mob-ov"></label>
+    <div class="mob-drawer">
+      <div class="mob-dh">
+        <span class="mob-dwm">enehano<span class="mob-dot">.</span></span>
+        <label for="mob-tgl" class="mob-cl">&#x2715;</label>
+      </div>
+      <nav class="mob-nav">{_mob_nav_items}</nav>
+      <div class="mob-df">
+        <span class="mob-lc">{len(scored_df):,} leads ranked</span>
+        <span class="mob-li">&#9679;&nbsp;Scoring live</span>
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ── Swipe card HTML builder ───────────────────────────────────────────────────
 def _build_swipe_html(cards: list[dict], idx: int) -> str:
@@ -931,24 +931,6 @@ nav = st.radio("Navigation", SCREENS, key="nav",
                horizontal=True, label_visibility="collapsed")
 st.write("")
 
-# ── Mobile hamburger: hidden trigger buttons + drawer injector ────────────────
-# Each button key maps to a CSS class (.st-key-<key>) that the drawer JS finds.
-_NAV_ITEMS = [
-    ("Today",        "_nav_btn_today"),
-    ("Swipe",        "_nav_btn_swipe"),
-    ("Radar",        "_nav_btn_radar"),
-    ("All leads",    "_nav_btn_all"),
-    ("Lead profile", "_nav_btn_profile"),
-    ("For managers", "_nav_btn_managers"),
-]
-for _screen, _key in _NAV_ITEMS:
-    if st.button(_screen, key=_key):
-        st.session_state["_goto"] = _screen
-        st.rerun()
-
-from streamlit.components.v1 import html as _chtml  # noqa: E402
-_chtml(_build_drawer_html(leads_count=len(scored_df), active_nav=nav),
-       height=0, width=0)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1872,3 +1854,5 @@ st.markdown(
 
 import ui_chat
 ui_chat.render_bubble(scored_df)
+
+
