@@ -25,18 +25,18 @@ DANGER        = "#ff4b4b"
 
 
 def suggested_action(row: pd.Series) -> tuple[str, str]:
-    """Return (emoji, action_text) based on lead behavioural signals."""
+    """Return ('', action_text) based on lead behavioural signals."""
     if row.get("Demo_Requested__c"):
-        return "📞", "Call within 24h - demo already requested"
+        return "", "Call within 24h — demo already requested"
     if row.get("Proposal_Sent__c"):
-        return "✉️", "Follow up on the open proposal"
+        return "", "Follow up on the open proposal"
     if float(row.get("Email_Clicks__c", 0)) >= 3:
-        return "📨", "Send tailored case study (high email engagement)"
+        return "", "Send a tailored case study — high email engagement"
     if float(row.get("Web_Interactions__c", 0)) >= 5:
-        return "💬", "Open with a chat - they keep visiting the site"
+        return "", "Reach out — they keep visiting the site"
     if float(row.get("Time_to_First_Response_h__c", 99)) < 4:
-        return "📞", "Hot lead - call today"
-    return "📅", "Schedule discovery call this week"
+        return "", "Hot lead — call today"
+    return "", "Schedule a discovery call this week"
 
 
 def _row_to_card(row: pd.Series) -> dict:
@@ -114,12 +114,11 @@ def render(scored_df: pd.DataFrame,
         st.info("No leads to display yet.")
         return
 
-    st.subheader("Swipe through your hottest leads")
+    st.subheader("Your top leads")
     st.caption(
-        f"{len(pool)} top-ranked leads, deck-style. "
-        "**Drag** the card, hit **->** / **←**, or use the buttons. "
-        "Swipe right = call this lead - left = skip - ↶ = undo.  \n"
-        "Key drivers are computed by the backend SHAP explainer."
+        f"{len(pool)} highest-scored leads. "
+        "Drag the card or use the arrow buttons to flip through. "
+        "Swipe right to mark a lead to call, left to skip."
     )
 
     cards = [_row_to_card(row) for _, row in pool.iterrows()]
@@ -136,9 +135,6 @@ def render(scored_df: pd.DataFrame,
         )
     with pick_r:
         st.write("")
-        if st.button("📂 Open in Lead Profile", use_container_width=True):
+        if st.button("Open in Lead Profile", use_container_width=True):
             st.session_state["selected_ico"] = cards[choice]["ico"]
-            st.toast(
-                "Switch to the 🏢 Lead Profile tab to inspect this lead.",
-                icon="➡",
-            )
+            st.toast("Switch to the Lead Profile tab to see the full breakdown.")
