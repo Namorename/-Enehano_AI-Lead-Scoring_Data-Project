@@ -255,10 +255,12 @@ _BUBBLE_INJECTOR = f"""
         style.textContent = `
             @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@700&display=swap');
 
-            /* Position chat dialog as a bottom-right floating panel */
+            /* Position chat dialog as a bottom-right floating panel.
+               Bubble is at bottom:80px + 64px tall = top at 144px,
+               so dialog sits 8px above it: 152px. */
             div[data-testid="stDialog"] > div[role="dialog"] {{
                 position: fixed !important;
-                bottom: 100px !important; right: 24px !important;
+                bottom: 152px !important; right: 20px !important;
                 top: auto !important; left: auto !important;
                 transform: none !important;
                 width: min(420px, 96vw) !important;
@@ -276,10 +278,14 @@ _BUBBLE_INJECTOR = f"""
                 }}
             }}
 
+            /* Also nuke the Streamlit status widget from here so it can't
+               create a red badge that clashes with our green bubble. */
+            [data-testid="stStatusWidget"] {{ display: none !important; }}
+
             .enehano-bubble {{
                 position: fixed;
-                right: 28px;
-                bottom: 28px;
+                right: 20px;
+                bottom: 80px;
                 z-index: 99999;
                 width: 64px;
                 height: 64px;
