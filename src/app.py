@@ -1198,6 +1198,9 @@ elif nav == "All leads":
         unsafe_allow_html=True,
     )
 
+    _search = st.text_input("", placeholder="🔍 Search by company name...",
+                             key="all_leads_search", label_visibility="collapsed")
+
     with st.expander("Filters"):
         f1, f2, f3, f4 = st.columns(4)
         with f1:
@@ -1211,6 +1214,8 @@ elif nav == "All leads":
             reg_f = st.multiselect("Region", sorted(scored_df["Region"].unique()))
 
     view = scored_df.copy()
+    if _search:
+        view = view[view["Company_Name"].str.contains(_search, case=False, na=False)]
     if seg_f: view = view[view["Segment"].isin(seg_f)]
     if ind_f: view = view[view["Industry"].isin(ind_f)]
     if src_f: view = view[view["LeadSource"].isin(src_f)]
@@ -1266,9 +1271,28 @@ elif nav == "Lead profile":
         unsafe_allow_html=True,
     )
     ranked = scored_df.sort_values("AI_Score", ascending=False)
+
+    # Text search narrows the list before the selectbox renders — 30k options
+    # in a selectbox is unusable on mobile (native picker, no typing).
+    # Default shows top 100 by score; typing filters to up to 50 matches.
+    _lp_q = st.text_input("", placeholder="🔍 Type company name to search...",
+                            key="lp_search", label_visibility="collapsed")
+    if _lp_q:
+        _filtered = ranked[ranked["Company_Name"].str.contains(
+            _lp_q, case=False, na=False)].head(50)
+    else:
+        _filtered = ranked.head(100)
+
+    # Keep the currently selected company in the list even if it's outside the window
+    _presel = st.session_state.get("selected_ico")
+    if _presel and _presel not in _filtered["IČO"].values:
+        _prerow = ranked[ranked["IČO"] == _presel]
+        if not _prerow.empty:
+            _filtered = pd.concat([_prerow, _filtered]).head(51)
+
     option_labels = {
         f"{r['Company_Name']}  ·  {r['AI_Score']:.0f}  ·  {r['IČO']}": r["IČO"]
-        for _, r in ranked.iterrows()
+        for _, r in _filtered.iterrows()
     }
     labels = list(option_labels.keys())
 
@@ -1280,10 +1304,7 @@ elif nav == "Lead profile":
                 default_index = i
                 break
 
-    picked = st.selectbox(
-        "Find a company - type to search",
-        labels, index=default_index,
-    )
+    picked = st.selectbox("", labels, index=default_index, label_visibility="collapsed")
     ico = option_labels[picked]
     st.session_state["selected_ico"] = ico
     row = scored_df[scored_df["IČO"] == ico].iloc[0]
