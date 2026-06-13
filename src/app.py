@@ -404,12 +404,38 @@ st.markdown(
         .stat-strip .s-lab {{ font-size: 12px; }}
         .chip         {{ font-size: 12px; padding: 4px 12px; }}
 
-        /* Push content below the fixed mobile top bar */
-        section[data-testid="stMain"] .block-container {{ padding-top: 68px !important; }}
+        /* Push content below the fixed 56px mobile top bar.
+           Streamlit's stVerticalBlock uses a 16px flex gap between children.
+           We collapse 2 of the 5 dead-zone containers (radio + desktop header)
+           entirely via display:none so they're removed from the flex flow.
+           That leaves 3 zero-height children × 16px = 48px of flex gap.
+           padding-top: 16px + 48px = 64px → first content at 64px, 8px below bar. */
+        section[data-testid="stMain"] .block-container {{ padding-top: 16px !important; }}
         .stApp {{ border-top: none !important; }}
+
+        /* Suppress Streamlit's own top bar completely on mobile —
+           our mob-hdr replaces it. stHeader contains the user avatar
+           (profile photo on Streamlit Cloud) and status widget. */
+        [data-testid="stHeader"]       {{ display: none !important; }}
+        [data-testid="stStatusWidget"] {{ display: none !important; }}
+        [data-testid="stDecoration"]   {{ display: none !important; }}
+
         /* Hide desktop chrome that duplicates the mobile bar */
         .brand-head, .status {{ display: none !important; }}
+        /* Collapse the whole nav radio widget (not just the radiogroup inside) */
+        [data-testid="stRadio"] {{ display: none !important; }}
         div[role="radiogroup"] {{ display: none !important; }}
+        /* Collapse the desktop header columns row entirely — :has() is
+           supported in Chrome 105+ / Safari 15.4+ / all modern mobile.
+           Eliminates the blank gap between mob-hdr and the first card. */
+        [data-testid="stHorizontalBlock"]:has(.brand-head) {{ display: none !important; }}
+
+        /* Remove the radio and desktop-header containers from the flex flow
+           entirely so their 16px flex-gap slot is reclaimed. The mobile-nav
+           container CANNOT be display:none (it hosts the position:fixed mob-hdr),
+           so it stays in flow — its 16px gap is accounted for in padding-top above. */
+        [data-testid="stElementContainer"]:has([data-testid="stRadio"]) {{ display: none !important; }}
+        [data-testid="stLayoutWrapper"]:has(.brand-head) {{ display: none !important; }}
         /* Mobile bar + drawer: switch from display:none to visible */
         .mob-hdr    {{ display: flex !important; }}
         .mob-ov     {{ display: block !important; }}
@@ -420,13 +446,19 @@ st.markdown(
     /* Hidden checkbox that drives the drawer open/close */
     .mob-tgl {{ display: none !important; }}
 
-    /* Fixed top bar (mobile only — hidden by default, shown at ≤640px) */
+    /* Fixed top bar (mobile only — hidden by default, shown at ≤640px).
+       z-index 999998 beats Streamlit's internal header (~999990) while
+       sitting below the chat bubble (99999 is per-component; the bubble
+       injection runs in window.parent so its 99999 is in a different layer).
+       isolation: isolate creates a fresh stacking context so transforms on
+       Streamlit ancestor divs can't drag us into their layer. */
     .mob-hdr {{
         display: none;
         position: fixed; top: 0; left: 0; right: 0; height: 56px;
         background: #0e1520; border-bottom: 1px solid {BORDER};
         align-items: center; justify-content: space-between;
-        padding: 0 16px; z-index: 9000;
+        padding: 0 16px; z-index: 999998;
+        isolation: isolate;
     }}
     .mob-ham {{
         font-size: 24px; color: {INK}; text-decoration: none;
@@ -1204,7 +1236,8 @@ elif nav == "Lead profile":
                                  int(row["Meetings_Held__c"]), key=f"meet_{ico}")
         with w2:
             sim_forms = st.slider("Forms filled", 0, 10,
-                                  int(row["Form_Submissions__c"]), key=f"forms_{ico}")
+                                  int(row
+                                      ["Form_Submissions__c"]), key=f"forms_{ico}")
             sim_demo = st.checkbox("Demo requested",
                                    bool(row["Demo_Requested__c"]), key=f"demo_{ico}")
             sim_li   = st.checkbox("Viewed on LinkedIn",
@@ -1849,6 +1882,7 @@ st.write("")
 st.markdown(
     f"<p style='text-align:center;color:{MUTED};font-size:12px'>"
     "Enehano Solutions · Lead Intelligence</p>",
+
     unsafe_allow_html=True,
 )
 
