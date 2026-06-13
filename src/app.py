@@ -440,6 +440,54 @@ st.markdown(
         .mob-hdr    {{ display: flex !important; }}
         .mob-ov     {{ display: block !important; }}
         .mob-drawer {{ display: flex !important; }}
+
+        /* ── Visual polish ───────────────────────────────────────── */
+
+        /* Global link reset — browser blue/underline stripped from all
+           mobile chrome. Per-element colors are re-applied below via their
+           own classes (.mob-nl → INK, .mob-ni-active .mob-nl → LIME). */
+        .mob-hdr a, .mob-drawer a {{
+            text-decoration: none !important;
+            color: inherit !important;
+        }}
+
+        /* Unified screen title — every st.markdown("## ...") on mobile
+           gets the same treatment instead of Streamlit's default ~32-40px. */
+        .stMarkdown h2 {{
+            font-family: 'Space Grotesk', sans-serif !important;
+            font-size: 22px !important;
+            font-weight: 700 !important;
+            letter-spacing: -0.3px !important;
+            line-height: 1.2 !important;
+            margin: 0 0 4px 0 !important;
+            padding: 0 !important;
+        }}
+
+        /* Body text: consistent line height across all screens */
+        .stMarkdown p {{ line-height: 1.5; }}
+
+        /* Touch targets — all buttons ≥ 44px tall */
+        .stButton > button, .stDownloadButton > button {{
+            min-height: 44px !important;
+        }}
+
+        /* Compact st.metric() — columns stack to 100% width on mobile and
+           each metric would otherwise consume ~100px. This halves that. */
+        [data-testid="stMetricLabel"] p {{
+            font-size: 11px !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.08em !important;
+            color: {MUTED} !important;
+            margin: 0 !important;
+        }}
+        [data-testid="stMetricValue"] div {{
+            font-size: 26px !important;
+            font-weight: 700 !important;
+            line-height: 1.15 !important;
+        }}
+        [data-testid="stMetricDelta"] div {{
+            font-size: 11px !important;
+        }}
     }}
 
     /* ── Mobile top bar + drawer ─────────────────────────────────────── */
@@ -498,8 +546,8 @@ st.markdown(
     /* Nav item links inside the drawer */
     .mob-nav {{ flex: 1; padding: 6px 0; display: flex; flex-direction: column; }}
     .mob-ni {{
-        display: flex; flex-direction: column; align-items: flex-start;
-        padding: 13px 20px; border-left: 3px solid transparent;
+        display: flex; align-items: center;
+        padding: 14px 20px; border-left: 3px solid transparent;
         text-decoration: none; transition: background .1s ease;
         -webkit-tap-highlight-color: transparent;
     }}
@@ -510,14 +558,13 @@ st.markdown(
     }}
     .mob-nl {{ font-size: 16px; font-weight: 600; color: {INK}; }}
     .mob-ni-active .mob-nl {{ color: {LIME}; }}
-    .mob-nd {{ font-size: 12px; color: {MUTED}; margin-top: 2px; }}
     /* Drawer footer */
     .mob-df {{
         padding: 16px 20px; border-top: 1px solid {BORDER};
         display: flex; flex-direction: column; gap: 4px;
     }}
     .mob-lc {{ font-size: 13px; color: {MUTED}; }}
-    .mob-li {{ font-size: 11px; color: {LIME}; font-weight: 600; letter-spacing: .05em; }}
+    .mob-li {{ font-size: 12px; color: {LIME}; font-weight: 600; letter-spacing: .05em; }}
 
     /* CSS toggle: when checkbox is checked, slide drawer + show overlay */
     .mob-tgl:checked ~ .mob-ov    {{ opacity: 1; pointer-events: all; }}
@@ -811,18 +858,11 @@ _mob_logo = (
     "enehano<span class='mob-dot'>.</span>"
 )
 
-_SCREENS_META = [
-    ("Today",        "Five calls — ranked by the model"),
-    ("Swipe",        "Quick card triage"),
-    ("Radar",        "Deals at risk and hidden gems"),
-    ("All leads",    "Full ranked pipeline"),
-    ("Lead profile", "One company in depth"),
-    ("For managers", "Revenue and model quality"),
-]
+_SCREENS_META = ["Today", "Swipe", "Radar", "All leads", "Lead profile", "For managers"]
 _mob_nav_items = "".join(
     f"<a href='?_nav={s}' class='mob-ni{' mob-ni-active' if s == st.session_state.get('nav','Today') else ''}'>"
-    f"<span class='mob-nl'>{s}</span><span class='mob-nd'>{d}</span></a>"
-    for s, d in _SCREENS_META
+    f"<span class='mob-nl'>{s}</span></a>"
+    for s in _SCREENS_META
 )
 st.markdown(
     f"""
@@ -985,12 +1025,24 @@ card.addEventListener('touchend', function() {{
 
 # ── Navigation (session-state driven so screens can hand off to each other) ──
 SCREENS = ["Today", "Swipe", "Radar", "All leads", "Lead profile", "For managers"]
+# Desktop pill-nav omits Swipe — mobile drawer is its only entry point.
+SCREENS_DESKTOP = ["Today", "Radar", "All leads", "Lead profile", "For managers"]
+
 if "_goto" in st.session_state:
     st.session_state["nav"] = st.session_state.pop("_goto")
 st.session_state.setdefault("nav", "Today")
 
-nav = st.radio("Navigation", SCREENS, key="nav",
-               horizontal=True, label_visibility="collapsed")
+# Radio shows desktop screens only. If current nav is "Swipe" (set by mobile
+# drawer), highlight "Today" in the radio but don't override session state.
+_desk_default = st.session_state["nav"] if st.session_state["nav"] in SCREENS_DESKTOP else "Today"
+_radio_pick = st.radio("Navigation", SCREENS_DESKTOP,
+                        index=SCREENS_DESKTOP.index(_desk_default),
+                        horizontal=True, label_visibility="collapsed")
+if _radio_pick != _desk_default:
+    st.session_state["nav"] = _radio_pick
+    st.rerun()
+
+nav = st.session_state["nav"]
 st.write("")
 
 
@@ -1098,7 +1150,7 @@ elif nav == "Swipe":
             sw_idx = 0
             st.session_state["swipe_idx"] = 0
 
-        _sv_html(_build_swipe_html(cards, sw_idx), height=440, scrolling=False)
+        _sv_html(_build_swipe_html(cards, sw_idx), height=330, scrolling=False)
 
         col_skip, col_call = st.columns(2)
         with col_skip:
@@ -1110,7 +1162,7 @@ elif nav == "Swipe":
                          type="primary", key="swipe_call_btn"):
                 st.session_state["swipe_called"].add(cards[sw_idx]["ico"])
                 st.session_state["swipe_idx"] = min(sw_idx + 1, len(cards) - 1)
-                st.toast(f"Queued: {cards[sw_idx]['company']}", icon="✓")
+                st.toast(f"Queued: {cards[sw_idx]['company']}", icon="✅")
                 st.rerun()
 
         called_count = len(st.session_state["swipe_called"])
