@@ -469,12 +469,15 @@ st.markdown(
         background: none; border: none; padding: 0;
     }}
     .mob-ham:active {{ background: #1a2230; }}
+    /* .mob-wm is now just the link wrapper — SVG provides the visual */
     .mob-wm {{
-        font-family: 'Space Grotesk', sans-serif;
-        font-size: 20px; font-weight: 700; color: {INK};
-        letter-spacing: -0.5px; text-decoration: none;
+        display: flex; align-items: center;
+        text-decoration: none; flex-shrink: 0;
     }}
     .mob-dot {{ color: {LIME}; }}
+    /* SVG logo container — fits the 56px bar with room to breathe */
+    .mob-logo-wrap {{ width: 120px; }}
+    .mob-logo-wrap svg {{ width: 100%; height: auto; display: block; }}
 
     /* Dim backdrop — visible when drawer is open */
     .mob-ov {{
@@ -483,30 +486,15 @@ st.markdown(
         z-index: 8998; opacity: 0; pointer-events: none;
         transition: opacity .25s ease;
     }}
-    /* Slide-in drawer */
+    /* Slide-in drawer — starts just below the 56px bar so the bar stays visible */
     .mob-drawer {{
         display: none;
-        position: fixed; top: 0; left: -292px; bottom: 0; width: 276px;
+        position: fixed; top: 56px; left: -292px; bottom: 0; width: 276px;
         background: #0e1520; border-right: 1px solid {BORDER};
         z-index: 8999; flex-direction: column; overflow-y: auto;
         transition: left .25s cubic-bezier(.4,0,.2,1);
+        border-top: 1px solid {BORDER};
     }}
-    /* Drawer header row */
-    .mob-dh {{
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 15px 16px 12px; border-bottom: 1px solid {BORDER};
-    }}
-    .mob-dwm {{
-        font-family: 'Space Grotesk', sans-serif;
-        font-size: 20px; font-weight: 700; color: {INK}; letter-spacing: -0.5px;
-    }}
-    .mob-cl {{
-        font-size: 22px; color: {MUTED}; text-decoration: none;
-        padding: 4px 8px; border-radius: 6px; cursor: pointer;
-        background: none; border: none;
-        -webkit-tap-highlight-color: transparent;
-    }}
-    .mob-cl:active {{ background: #1a2230; }}
     /* Nav item links inside the drawer */
     .mob-nav {{ flex: 1; padding: 6px 0; display: flex; flex-direction: column; }}
     .mob-ni {{
@@ -814,8 +802,17 @@ with h_right:
 # Only visible at ≤640px (CSS controls this). Uses a hidden checkbox for
 # the open/close toggle (pure CSS, zero JS needed). Nav items are <a href>
 # links that set ?_nav=<screen> — handled above at startup.
+
+# Embed SVG inline so it inherits our CSS sizing (no separate network request)
+_mob_svg = LOGO_SVG.read_text(encoding="utf-8") if LOGO_SVG.exists() else ""
+_mob_logo = (
+    f"<div class='mob-logo-wrap'>{_mob_svg}</div>"
+    if _mob_svg else
+    "enehano<span class='mob-dot'>.</span>"
+)
+
 _SCREENS_META = [
-    ("Today",        "Your priority call queue"),
+    ("Today",        "Five calls — ranked by the model"),
     ("Swipe",        "Quick card triage"),
     ("Radar",        "Deals at risk and hidden gems"),
     ("All leads",    "Full ranked pipeline"),
@@ -832,15 +829,11 @@ st.markdown(
     <input type="checkbox" id="mob-tgl" class="mob-tgl">
     <div class="mob-hdr">
       <label for="mob-tgl" class="mob-ham" aria-label="Open navigation">&#9776;</label>
-      <a href="?_nav=Today" class="mob-wm">enehano<span class="mob-dot">.</span></a>
+      <a href="?_nav=Today" class="mob-wm">{_mob_logo}</a>
       <span style="width:44px;flex-shrink:0"></span>
     </div>
     <label for="mob-tgl" class="mob-ov"></label>
     <div class="mob-drawer">
-      <div class="mob-dh">
-        <span class="mob-dwm">enehano<span class="mob-dot">.</span></span>
-        <label for="mob-tgl" class="mob-cl">&#x2715;</label>
-      </div>
       <nav class="mob-nav">{_mob_nav_items}</nav>
       <div class="mob-df">
         <span class="mob-lc">{len(scored_df):,} leads ranked</span>
@@ -854,10 +847,17 @@ st.markdown(
 # ── Swipe card HTML builder ───────────────────────────────────────────────────
 def _build_swipe_html(cards: list[dict], idx: int) -> str:
     """
-    Single-card display for the Swipe screen.
-    Touch drag shows visual feedback (tilt + colour overlay) but does NOT
-    navigate — the Streamlit Skip / Call buttons below are the reliable CTA.
-    A CSS slide-in animation plays each time the card changes.
+    Single-card swipe component for the Swipe screen.
+
+    Mobile (≤640px): horizontal drag with a 90px threshold triggers
+    real navigation — the card flies off-screen and window.parent.location
+    is set to ?swi=<next_idx>&swi_action=skip|call.  The handler at the
+    top of this file reads those params, advances swipe_idx, and records
+    the call in swipe_called, matching what the Skip / Call buttons do.
+
+    Desktop (≥641px): card hidden; a prompt is shown instead.  The
+    Skip / Call buttons below the component remain the fallback on all
+    screen sizes.
     """
     if not cards:
         return "<p style='color:#7a8898;text-align:center;padding:40px'>No leads.</p>"
@@ -865,11 +865,11 @@ def _build_swipe_html(cards: list[dict], idx: int) -> str:
     c         = cards[idx_safe]
     total     = len(cards)
     at_end    = idx_safe >= total - 1
+    at_end_js = "true" if at_end else "false"
+    next_idx  = min(idx_safe + 1, total - 1)
     prog_note = " · All done — tap Reset to start over" if at_end else ""
 
-    chips = "".join(
-        f"<span class='ch'>{d}</span>" for d in c["drivers"]
-    )
+    chips = "".join(f"<span class='ch'>{d}</span>" for d in c["drivers"])
 
     return f"""<!doctype html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -897,11 +897,15 @@ body{{background:transparent;padding:0 2px;overflow:hidden;}}
 .sn{{font-size:16px;font-weight:700;color:#f0f4f8;}}
 .sl{{font-size:10px;color:#7a8898;text-transform:uppercase;letter-spacing:.05em;}}
 .prog{{text-align:center;color:#7a8898;font-size:12px;margin-top:11px;}}
-/* Drag feedback overlay — visual only, no navigation */
 .ov{{position:absolute;inset:0;pointer-events:none;opacity:0;
      display:flex;align-items:center;justify-content:center;
      font-size:60px;border-radius:18px;transition:opacity .08s;}}
 .ov-s{{background:rgba(226,92,92,.16);}} .ov-c{{background:rgba(166,206,57,.16);}}
+/* Desktop prompt — base is none; the min-width rule enables it.
+   Base must come BEFORE the media query or the cascade kills the override. */
+.desk{{display:none;align-items:center;justify-content:center;height:200px;
+       color:#7a8898;font-size:15px;text-align:center;padding:32px;line-height:1.6;}}
+@media (min-width:641px) {{ .card{{display:none;}} .desk{{display:flex;}} }}
 </style></head><body>
 <div class="card" id="card">
   <div class="ov ov-s" id="ovs">✕</div>
@@ -925,30 +929,56 @@ body{{background:transparent;padding:0 2px;overflow:hidden;}}
   </div>
   <div class="prog">{idx_safe + 1} / {total}{prog_note}</div>
 </div>
+<div class="desk">Swipe triage works best on&nbsp;mobile.<br>Use the Skip / Call buttons below.</div>
 <script>
-const card = document.getElementById('card');
-const ovs  = document.getElementById('ovs');
-const ovc  = document.getElementById('ovc');
-let sx = 0, sy = 0, on = false;
+var card = document.getElementById('card');
+var ovs  = document.getElementById('ovs');
+var ovc  = document.getElementById('ovc');
+var sx = 0, sy = 0, cx = 0, on = false;
+var THRESHOLD = 90;
+var atEnd   = {at_end_js};
+var nextIdx = {next_idx};
+
 card.addEventListener('touchstart', function(e) {{
-  sx = e.touches[0].clientX; sy = e.touches[0].clientY; on = true;
+  sx = e.touches[0].clientX;
+  sy = e.touches[0].clientY;
+  cx = sx;
+  on = true;
 }}, {{passive: true}});
+
 card.addEventListener('touchmove', function(e) {{
   if (!on) return;
-  const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
+  cx = e.touches[0].clientX;
+  var dx = cx - sx, dy = e.touches[0].clientY - sy;
   if (Math.abs(dy) > Math.abs(dx)) return;
-  const t = Math.min(Math.abs(dx) / 110, 1);
-  const rot = dx * 0.018;
-  card.style.transform = 'translateX(' + dx * 0.22 + 'px) rotate(' + rot + 'deg)';
+  var t = Math.min(Math.abs(dx) / 110, 1);
+  card.style.transform = 'translateX(' + dx * 0.22 + 'px) rotate(' + dx * 0.018 + 'deg)';
   if (dx < 0) {{ ovs.style.opacity = t * 0.85; ovc.style.opacity = 0; }}
   else        {{ ovc.style.opacity = t * 0.85; ovs.style.opacity = 0; }}
 }}, {{passive: true}});
+
 card.addEventListener('touchend', function() {{
+  if (!on) return;
   on = false;
-  card.style.transition = 'transform .18s ease';
-  card.style.transform = '';
-  ovs.style.opacity = 0; ovc.style.opacity = 0;
-  setTimeout(function() {{ card.style.transition = ''; }}, 200);
+  var dx = cx - sx;
+  if (!atEnd && Math.abs(dx) >= THRESHOLD) {{
+    var dir    = dx < 0 ? -1 : 1;
+    var action = dx < 0 ? 'skip' : 'call';
+    /* Fly card off-screen, then advance the parent page */
+    card.style.transition = 'transform .28s ease, opacity .28s ease';
+    card.style.transform  = 'translateX(' + (dir * 110) + '%) rotate(' + (dir * 18) + 'deg)';
+    card.style.opacity    = '0';
+    ovs.style.opacity = 0; ovc.style.opacity = 0;
+    setTimeout(function() {{
+      window.parent.location.href = '?swi=' + nextIdx + '&swi_action=' + action;
+    }}, 300);
+  }} else {{
+    /* Snap back — below threshold or at end of deck */
+    card.style.transition = 'transform .18s ease';
+    card.style.transform  = '';
+    ovs.style.opacity = 0; ovc.style.opacity = 0;
+    setTimeout(function() {{ card.style.transition = ''; }}, 200);
+  }}
 }});
 </script></body></html>"""
 
