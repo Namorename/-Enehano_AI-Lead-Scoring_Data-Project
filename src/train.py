@@ -1,42 +1,3 @@
-"""
-train.py
-========
-Trains and evaluates the Enehano lead-scoring models.
-
-Two classifiers are trained:
-  * conversion model : Lead -> Opportunity  (target = Converted)
-  * win model        : Opportunity -> Closed Won  (target = Closed_Won,
-                       trained only on rows where Converted == 1)
-
-Evaluation:
-  * Time-based 5-fold cross-validation (mean ± std AUC)
-  * Time-based held-out test set: AUC-ROC, PR-AUC, precision, recall, F1,
-    confusion matrix
-  * Side-by-side comparison with the rule-based baseline
-  * Top feature importances saved to CSV
-
-Artifacts written:
-  model.pkl, preprocessor.pkl, feature_names.pkl,
-  conv_explainer.pkl (SHAP explainer for the conversion base model: a
-    TreeExplainer for tree models, a LinearExplainer for linear ones),
-  win_model.pkl, win_preprocessor.pkl,
-  win_explainer.pkl (same idea for the win model; see _build_explainer, or None
-    if the model type isn't supported),
-  metrics.json, feature_importance.csv, val_predictions.csv
-
-  Note: the served models are CalibratedClassifierCV wrappers, but each explainer
-  is built on the base estimator, so SHAP values explain the uncalibrated ranking
-  rather than the calibrated probability.
-
-Column contract (matches data_generator.py output):
-  ID / audit cols  -> dropped before building X (never seen by the model)
-  Leaky cols       -> dropped (Conversion_Probability, Rule_Based_Score/Segment)
-  Date strings     -> parsed by feature_engineering.py, then dropped from X
-  Bool flags       -> explicitly cast to int (0/1), so StandardScaler handles
-                     them correctly without dtype ambiguity
-  Legal_Form_Code  -> generator writes it as str, so OHE handles it correctly
-"""
-
 import json
 import os
 import random
@@ -110,6 +71,11 @@ try:
     import optuna
 except ImportError:  # optional dependency; tuning is explicitly gated
     optuna = None
+
+try:
+    import mlflow
+except ImportError:  # optional dependency; training works without it
+    mlflow = None
 
 warnings.filterwarnings(
     "ignore",
@@ -1344,6 +1310,65 @@ def _train_one(
     }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# MLFLOW
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _log_to_mlflow(metrics: dict, conv: dict, win: dict) -> None:
+    """Log a completed training run to MLflow (no-op if mlflow is not installed)."""
+    if mlflow is None:
+        return
+
+    experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "lead-scoring")
+    mlflow.set_experiment(experiment_name)
+
+    with mlflow.start_run():
+        mlflow.log_params({
+            "exclude_status_proxies":        bool(EXCLUDE_STATUS_PROXIES),
+            "n_rows":                        metrics["n_rows"],
+            "n_converted":                   metrics["n_converted"],
+            "n_won":                         metrics["n_won"],
+            "feature_count":                 metrics["feature_count"],
+            "win_feature_count":             metrics["win_feature_count"],
+            "conv_selected":                 conv["selected_candidate"],
+            "conv_algorithm":                conv["base_algorithm"],
+            "win_selected":                  win["selected_candidate"],
+            "win_algorithm":                 win["base_algorithm"],
+            "random_state":                  RANDOM_STATE,
+            "conv_calibration_fraction":     CONVERSION_CALIBRATION_FRACTION,
+            "win_calibration_fraction":      WIN_CALIBRATION_FRACTION,
+        })
+
+        mlflow.log_metrics({
+            "conv_auc_roc":            conv["test"]["auc_roc"],
+            "conv_pr_auc":             conv["test"]["pr_auc"],
+            "conv_f1":                 conv["test"]["f1"],
+            "conv_precision":          conv["test"]["precision"],
+            "conv_recall":             conv["test"]["recall"],
+            "conv_brier":              conv["test"]["brier"],
+            "conv_ece":                conv["calibration_ece"],
+            "conv_cv_auc_mean":        conv["cv"]["auc_mean"],
+            "conv_cv_auc_std":         conv["cv"]["auc_std"],
+            "conv_optimal_threshold":  conv["optimal_threshold"],
+            "win_auc_roc":             win["test"]["auc_roc"],
+            "win_pr_auc":              win["test"]["pr_auc"],
+            "win_f1":                  win["test"]["f1"],
+            "win_precision":           win["test"]["precision"],
+            "win_recall":              win["test"]["recall"],
+            "win_brier":               win["test"]["brier"],
+            "win_ece":                 win["calibration_ece"],
+            "win_cv_auc_mean":         win["cv"]["auc_mean"],
+            "win_cv_auc_std":          win["cv"]["auc_std"],
+            "win_optimal_threshold":   win["optimal_threshold"],
+            "uplift_auc":              metrics["comparison_conversion"]["uplift_auc"],
+        })
+
+        mlflow.log_artifact(str(METRICS_JSON))
+        mlflow.log_artifact(str(FEATURE_IMPORTANCE))
+
+    print(f"MLflow run logged to experiment '{experiment_name}'.")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1615,6 +1640,8 @@ def main() -> None:
             f"(split source: {source['model_name']} / {source['algorithm']})"
         )
     print(f"\nArtifacts written to {MODELS_DIR}/")
+
+    _log_to_mlflow(metrics, conv, win)
 
 
 if __name__ == "__main__":

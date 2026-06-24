@@ -1,0 +1,16 @@
+# Enehano Lead Intelligence — native dark theme.
+#
+# This replaces dozens of CSS !important overrides: Streamlit renders
+# every widget (inputs, tables, metrics, sliders) correctly on dark
+# when the theme is declared here instead of patched in CSS.
+
+[theme]
+base                   = "dark"
+primaryColor           = "#a6ce39"
+backgroundColor        = "#0d1218"
+secondaryBackgroundColor = "#151c24"
+textColor              = "#e8edf2"
+font                   = "sans serif"
+
+[browser]
+gatherUsageStats = false
