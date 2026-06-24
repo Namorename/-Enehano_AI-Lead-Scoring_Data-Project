@@ -1,24 +1,19 @@
 """
 app.py
 ======
-Enehano Lead Intelligence - Streamlit dashboard (API-backed edition).
+Enehano Lead Intelligence - Streamlit dashboard.
+
+A sales product, not a model showcase. Four screens:
+
+  Today         - the call queue: five companies, ranked, with a reason to call
+  All leads     - the full ranked pipeline, filters, Salesforce-ready export
+  Lead profile  - one company in depth, with a live what-if simulator
+  For managers  - revenue impact, model quality, stability (everything a rep
+                  doesn't need is here, out of the way)
 
 All model inference is delegated to the FastAPI backend (api.py).
-No joblib / sklearn / shap imports - the frontend is a pure UI layer.
-
-Column contract:
-  Region        -> generator writes Region_Name; load_data() adds a 'Region' alias.
-  AI_Score      -> populated by score_pipeline() via the /score/batch API endpoint.
-  Rule_Score    -> returned by the API ScoreOutput.rule_score field.
-
-Tabs:
-  Overview        - headline KPIs and plain-English findings
-  Business Value  - ROI calculator (revenue uplift, payback)
-  My Leads        - prioritised pipeline + filters + CSV export
-  Top Lead Cards  - swipeable Tinder-style card deck
-  Lead Profile    - single-lead deep-dive with what-if simulator + ARES
-  Regional Map    - Czech Republic bubble map by Kraj
-  Model Insights  - ROC / PR / Lift / threshold tuner
+Visual theming lives in .streamlit/config.toml (native dark theme);
+the CSS below only adds brand identity on top, never fights the platform.
 """
 from __future__ import annotations
 
@@ -26,7 +21,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -38,174 +32,547 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import business_helpers as bh
-import ui_splash
 from contracts import API_PAYLOAD_EXCLUDE_COLS, add_region_alias, score_segment
 from paths import (
     LEAD_TRAIN, METRICS_JSON, FEATURE_IMPORTANCE, VAL_PREDICTIONS, LOGO_SVG,
 )
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-API_BASE      = os.getenv("SCORING_API_URL", "http://localhost:8000")
-ENEHANO_GREEN = "#a6ce39"
-DANGER        = "#ff4b4b"
-WARN          = "#ffc107"
+# ── Brand tokens ──────────────────────────────────────────────────────────────
+# SCORING_API_URL controls the scoring backend:
+#   unset or "embedded"        → in-process scoring via scorer.py (Streamlit Cloud)
+#   http://host:port           → external FastAPI backend (local dev / production)
+_SCORING_URL = os.getenv("SCORING_API_URL", "")
+EMBEDDED     = not _SCORING_URL or _SCORING_URL.lower() == "embedded"
+API_BASE     = _SCORING_URL if not EMBEDDED else "http://localhost:8000"
 
-# ── Page setup ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Enehano Lead Intelligence", layout="wide", page_icon="🎯")
-ui_splash.maybe_show(LOGO_SVG)
+if EMBEDDED:
+    import scorer as _scorer
 
-# ── Glassmorphism CSS ─────────────────────────────────────────────────────────
+LIME    = "#a6ce39"   # the one accent: scores, High priority, primary actions
+AMBER   = "#d9a93c"   # Medium priority
+SLATE   = "#5d6b7a"   # Low priority - cool and quiet, a lead is not an error
+RED     = "#e25c5c"   # reserved for genuine problems (drift), never for leads
+INK     = "#e8edf2"
+MUTED   = "#94a1ae"
+SURFACE = "#151c24"
+BORDER  = "#26303b"
+
+SEG_COLOR = {"High": LIME, "Medium": AMBER, "Low": SLATE}
+
+st.set_page_config(
+    page_title="Enehano Lead Intelligence",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# ── Identity layer (the theme does the heavy lifting in config.toml) ─────────
 st.markdown(
     f"""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Grotesk:wght@700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap');
 
-    html, body, .stApp {{ font-family: 'DM Sans', sans-serif; }}
+    html, body, [class*="css"] {{ font-family: 'DM Sans', sans-serif; }}
 
-    .stApp {{
-        background: radial-gradient(ellipse at 20% 0%, #0b2407 0%, #070b10 50%, #080b10 100%);
-        min-height: 100vh;
-        color: #f4f7fb !important;
+    /* Brand stripe - a single lime line at the very top of the product */
+    .stApp {{ border-top: 3px solid {LIME}; }}
+
+    /* One orchestrated entrance: header and queue cards rise into place */
+    @keyframes rise {{
+        from {{ opacity: 0; transform: translateY(14px); }}
+        to   {{ opacity: 1; transform: none; }}
     }}
-    .stApp, .stApp * {{ color: #f4f7fb !important; }}
-
-    /* High-contrast secondary text */
-    [data-testid="stCaptionContainer"],
-    [data-testid="stMarkdownContainer"] small,
-    label, .stSlider label, .stMultiSelect label,
-    .stSelectbox label, .stTextInput label {{
-        color: #d6dde6 !important;
-        opacity: 1 !important;
-    }}
-
-    /* Inputs keep dark text for readability */
-    .stApp input, .stApp textarea, .stApp select,
-    .stApp .stTextInput input, .stApp .stNumberInput input,
-    .stApp [data-baseweb="select"] * {{ color: #111 !important; }}
-    .stApp input, .stApp textarea,
-    .stApp [data-baseweb="select"] > div {{
-        background: #f7fafc !important;
-        border-color: #d8e0ea !important;
+    .brand-head {{ animation: rise .5s ease both; }}
+    [data-testid="stVerticalBlockBorderWrapper"] {{ animation: rise .5s ease both; }}
+    [data-testid="stVerticalBlockBorderWrapper"]:nth-of-type(1) {{ animation-delay: .05s; }}
+    [data-testid="stVerticalBlockBorderWrapper"]:nth-of-type(2) {{ animation-delay: .13s; }}
+    [data-testid="stVerticalBlockBorderWrapper"]:nth-of-type(3) {{ animation-delay: .21s; }}
+    [data-testid="stVerticalBlockBorderWrapper"]:nth-of-type(4) {{ animation-delay: .29s; }}
+    [data-testid="stVerticalBlockBorderWrapper"]:nth-of-type(5) {{ animation-delay: .37s; }}
+    @media (prefers-reduced-motion: reduce) {{
+        .brand-head, [data-testid="stVerticalBlockBorderWrapper"] {{ animation: none; }}
     }}
 
-    /* Buttons */
-    .stButton > button, .stDownloadButton > button {{
-        background: linear-gradient(135deg, {ENEHANO_GREEN}, #8ab52e) !important;
-        color: #0a0e14 !important;
-        border: none !important;
-        border-radius: 10px !important;
-        font-weight: 700 !important;
-        letter-spacing: 0.04em !important;
-        box-shadow: 0 4px 20px rgba(166, 206, 57, 0.25) !important;
-        transition: transform 0.15s ease, box-shadow 0.15s ease !important;
-    }}
-    .stButton > button:hover, .stDownloadButton > button:hover {{
-        transform: translateY(-2px) !important;
-        box-shadow: 0 8px 28px rgba(166, 206, 57, 0.40) !important;
-    }}
-    .stButton > button *, .stDownloadButton > button * {{ color: #0a0e14 !important; }}
-
-    /* Glassmorphism card - the main reusable surface */
-    .glass-card {{
-        background: rgba(12, 18, 25, 0.82);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
-        border: 1px solid rgba(230, 238, 247, 0.22);
-        border-radius: 18px;
-        padding: 24px 28px;
-        margin-bottom: 18px;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255,255,255,0.08);
-    }}
-
-    /* Metric tiles */
-    [data-testid="stMetric"] {{
-        background: rgba(10, 16, 22, 0.88);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(166, 206, 57, 0.38);
-        border-radius: 14px;
-        padding: 14px 16px;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.2);
-    }}
-    [data-testid="stMetric"] * {{ color: #f4f7fb !important; }}
-    [data-testid="stMetricValue"] {{ font-family: 'Space Grotesk', sans-serif !important; font-size: 28px !important; }}
-    [data-testid="stMetricDelta"] svg {{ fill: {ENEHANO_GREEN} !important; }}
-
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] {{
-        background: rgba(8, 12, 17, 0.86);
-        border-radius: 14px;
-        padding: 4px;
-        border: 1px solid rgba(230,238,247,0.18);
-        gap: 2px;
-    }}
-    .stTabs [data-baseweb="tab"] {{
-        border-radius: 10px !important;
-        font-weight: 600;
-        color: #d6dde6 !important;
-        transition: all 0.2s ease;
-    }}
-    .stTabs [aria-selected="true"] {{
-        background: {ENEHANO_GREEN} !important;
-        color: #0a0e14 !important;
-        box-shadow: 0 2px 12px rgba(166,206,57,0.2);
-    }}
-    .stTabs [aria-selected="true"] * {{ color: #0a0e14 !important; }}
-
-    /* Sidebar glassmorphism */
-    [data-testid="stSidebar"] {{
-        background: rgba(7, 10, 14, 0.96) !important;
-        backdrop-filter: blur(20px);
-        border-right: 1px solid rgba(230,238,247,0.18);
-    }}
-
-    /* DataFrames */
-    .stDataFrame, .stDataFrame * {{ color: #f4f7fb !important; }}
-    [data-testid="stDataFrame"] > div {{
-        border-radius: 14px !important;
-        overflow: hidden;
-        border: 1px solid rgba(230,238,247,0.20) !important;
-        background: rgba(8,12,17,0.90) !important;
-    }}
-
-    /* Utility classes */
-    .badge {{
-        display: inline-block;
-        padding: 4px 13px;
-        border-radius: 999px;
-        font-weight: 700;
-        font-size: 12px;
-        letter-spacing: 0.06em;
-        color: #111 !important;
-    }}
-    .hero {{
+    /* Hero headline on Today */
+    .hero-line {{
         font-family: 'Space Grotesk', sans-serif;
-        font-size: 30px;
-        font-weight: 800;
-        margin: 0;
-        background: linear-gradient(90deg, #ffffff, {ENEHANO_GREEN});
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
+        font-size: 40px;
+        font-weight: 700;
+        letter-spacing: -1px;
+        line-height: 1.12;
+        color: {INK};
+        margin: 2px 0 4px 0;
     }}
-    .subtle {{ font-size: 13px; opacity: 1; color: #d6dde6 !important; }}
+    .hero-line .hl {{ color: {LIME}; }}
+
+    /* Slim stat strip under the hero */
+    .stat-strip {{
+        display: flex;
+        gap: 34px;
+        margin: 14px 0 6px 0;
+    }}
+    .stat-strip .s-val {{
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 22px;
+        font-weight: 700;
+        color: {INK};
+    }}
+    .stat-strip .s-lab {{
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: {MUTED};
+    }}
+
+    /* Live pulse dot */
+    @keyframes pulse {{
+        0%   {{ box-shadow: 0 0 0 0 rgba(166, 206, 57, 0.45); }}
+        70%  {{ box-shadow: 0 0 0 7px rgba(166, 206, 57, 0); }}
+        100% {{ box-shadow: 0 0 0 0 rgba(166, 206, 57, 0); }}
+    }}
+    .live-dot {{
+        display: inline-block;
+        width: 8px; height: 8px;
+        border-radius: 50%;
+        background: {LIME};
+        animation: pulse 2.2s ease-out infinite;
+        margin-right: 6px;
+        vertical-align: 1px;
+    }}
+    @media (prefers-reduced-motion: reduce) {{ .live-dot {{ animation: none; }} }}
+
+    /* Business case: verdict + head-to-head + rollout */
+    .verdict {{
+        border: 1px solid {LIME};
+        border-radius: 14px;
+        padding: 26px 30px;
+        background: rgba(166, 206, 57, 0.06);
+        margin: 6px 0 10px 0;
+    }}
+    .verdict .v-title {{
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 27px;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+        color: {INK};
+        margin: 0 0 6px 0;
+    }}
+    .h2h {{ text-align: center; padding: 18px 8px; }}
+    .h2h .n {{
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 40px; font-weight: 700; line-height: 1.05;
+    }}
+    .h2h .l {{
+        font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+        text-transform: uppercase; color: {MUTED}; margin-top: 4px;
+    }}
+    .step-tag {{
+        display: inline-block;
+        font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: {LIME};
+        border: 1px solid {LIME};
+        border-radius: 999px;
+        padding: 3px 12px;
+        margin-bottom: 10px;
+    }}
+
+    /* Top navigation: a radio group dressed as a product nav */
+    div[role="radiogroup"] {{
+        gap: 6px;
+        background: {SURFACE};
+        border: 1px solid {BORDER};
+        border-radius: 10px;
+        padding: 4px;
+        width: fit-content;
+        margin: 0 auto;
+    }}
+    div[role="radiogroup"] label {{
+        padding: 7px 20px;
+        border-radius: 7px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background .12s ease;
+    }}
+    div[role="radiogroup"] label:hover {{ background: #1c2530; }}
+    div[role="radiogroup"] label > div:first-child {{ display: none; }}
+    div[role="radiogroup"] label:has(input:checked) {{
+        background: {LIME};
+    }}
+    div[role="radiogroup"] label:has(input:checked) p {{
+        color: #10160a !important;
+        font-weight: 700;
+    }}
+
+    /* Wordmark */
+    .wordmark {{
+        font-family: 'Space Grotesk', sans-serif;
+        font-weight: 700;
+        font-size: 26px;
+        letter-spacing: -0.5px;
+        color: {INK};
+    }}
+    .wordmark .dot {{ color: {LIME}; }}
+    .tagline {{ color: {MUTED}; font-size: 13px; margin-top: -4px; }}
+
+    .status {{ font-size: 12px; color: {MUTED}; text-align: right; }}
+    .status .on  {{ color: {LIME}; }}
+    .status .off {{ color: {RED}; }}
+
+    /* Section eyebrows - quiet structure */
+    .eyebrow {{
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: {MUTED};
+        margin: 6px 0 2px 0;
+    }}
+
+    /* Call-queue rank numeral - the signature element */
+    .rank {{
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 44px;
+        font-weight: 700;
+        color: {LIME};
+        line-height: 1.0;
+        opacity: 0.92;
+    }}
+    .q-co   {{ font-size: 19px; font-weight: 700; color: {INK}; }}
+    .q-meta {{ font-size: 13px; color: {MUTED}; }}
+    .q-why  {{
+        font-size: 14px;
+        color: {INK};
+        margin-top: 7px;
+        padding-left: 10px;
+        border-left: 2px solid {LIME};
+    }}
+    .q-score {{
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 38px;
+        font-weight: 700;
+        line-height: 1.0;
+        text-align: right;
+    }}
+
+    .chip {{
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 3px 10px;
+        border-radius: 999px;
+        border: 1px solid;
+    }}
+
+    .big-score {{
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 76px;
+        font-weight: 700;
+        line-height: 1.0;
+    }}
+
     .finding {{
         font-size: 15px;
         padding: 12px 16px;
-        border-left: 3px solid {ENEHANO_GREEN};
-        background: rgba(166, 206, 57, 0.12);
-        color: #f4f7fb !important;
-        border-radius: 8px;
+        border-left: 2px solid {LIME};
+        background: rgba(166, 206, 57, 0.07);
+        border-radius: 0 8px 8px 0;
         margin: 8px 0;
-        backdrop-filter: blur(8px);
     }}
-    .score-ring {{
-        background: rgba(8,12,17,0.86);
-        backdrop-filter: blur(12px);
-        border: 2px solid;
-        text-align: center;
-        padding: 20px;
-        border-radius: 18px;
-        margin-bottom: 14px;
+
+    /* Primary buttons: flat lime, no gradients, no motion tricks */
+    .stButton > button[kind="primary"],
+    .stDownloadButton > button {{
+        background: {LIME};
+        color: #10160a;
+        border: none;
+        font-weight: 700;
+    }}
+    .stButton > button[kind="primary"]:hover,
+    .stDownloadButton > button:hover {{
+        background: #b8dd4e;
+        color: #10160a;
+    }}
+
+    /* ── Flex card layout — works at any viewport width ─────────────── */
+    /* Cards use their own flex row so the content never collapses awkwardly */
+    .q-card {{
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        padding-bottom: 4px;
+    }}
+    .q-card-rank {{
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 44px;
+        font-weight: 700;
+        color: {LIME};
+        line-height: 1.0;
+        opacity: 0.92;
+        flex-shrink: 0;
+        min-width: 52px;
+    }}
+    .q-card-body {{ flex: 1; min-width: 0; }}
+    .q-card-right {{ flex-shrink: 0; text-align: right; padding-top: 4px; }}
+    .q-card-left  {{ flex-shrink: 0; padding-top: 2px; min-width: 60px; }}
+
+    /* ── Mobile responsive layout ────────────────────────────────────── */
+    @media (max-width: 768px) {{
+
+        /* Stack every st.columns() group into a single column */
+        [data-testid="stHorizontalBlock"] {{
+            flex-wrap: wrap;
+        }}
+        [data-testid="column"] {{
+            width: 100% !important;
+            min-width: 100% !important;
+            flex: 1 1 100% !important;
+        }}
+
+        /* Touch-friendly nav: wrap tabs, 44 px minimum tap target */
+        div[role="radiogroup"] {{
+            width: 100% !important;
+            flex-wrap: wrap !important;
+            justify-content: center !important;
+        }}
+        div[role="radiogroup"] label {{
+            min-height: 44px !important;
+            display: flex !important;
+            align-items: center !important;
+            padding: 8px 14px !important;
+        }}
+
+        /* Scale headlines down for narrow screens */
+        .hero-line    {{ font-size: clamp(24px, 7vw, 40px); letter-spacing: -0.3px; }}
+        .rank         {{ font-size: 34px; }}
+        .q-score      {{ font-size: 26px; }}
+        .q-card-rank  {{ font-size: 32px; min-width: 38px; }}
+        .q-card       {{ gap: 10px; }}
+        .big-score    {{ font-size: 54px; }}
+        .h2h .n       {{ font-size: 28px; }}
+
+        /* Stat strip: wrap gracefully instead of overflowing */
+        .stat-strip {{ flex-wrap: wrap; gap: 18px; }}
+
+        /* Logo and status pill centred on narrow screens */
+        .brand-head, .status {{ text-align: center; }}
+
+        /* Looser padding in bordered blocks */
+        .verdict {{ padding: 18px 16px; }}
+
+        /* Streamlit UI chrome: hide Deploy/Share to feel like a native app */
+        [data-testid="stToolbar"],
+        [data-testid="stDecoration"],
+        .stDeployButton {{ display: none !important; }}
+
+        /* iOS safe-area: don't clip content behind the home indicator */
+        .stApp {{ padding-bottom: env(safe-area-inset-bottom, 16px); }}
+
+        /* Suppress the grey tap-flash on touch */
+        * {{ -webkit-tap-highlight-color: transparent; }}
+    }}
+
+    /* ── Logo container — lets CSS control the width ──────────────────── */
+    .logo-wrap {{ width: 190px; }}
+    .logo-wrap svg {{ width: 100%; height: auto; display: block; }}
+
+    /* ── Phone-specific tweaks (≤ 640px) — override some 768px rules ── */
+    @media (max-width: 640px) {{
+
+        /* Smaller logo on a phone */
+        .logo-wrap {{ width: 128px; }}
+
+        /* Nav: scroll horizontally instead of wrapping into a grid */
+        div[role="radiogroup"] {{
+            overflow-x: auto !important;
+            flex-wrap: nowrap !important;
+            justify-content: flex-start !important;
+            scrollbar-width: none !important;
+            -webkit-overflow-scrolling: touch;
+        }}
+        div[role="radiogroup"]::-webkit-scrollbar {{ display: none; }}
+        div[role="radiogroup"] label {{
+            white-space: nowrap !important;
+            flex-shrink: 0 !important;
+        }}
+
+        /* Bump up the smallest text — 11px is unreadable on a phone */
+        .eyebrow      {{ font-size: 13px; }}
+        .q-meta       {{ font-size: 14px; }}
+        .stat-strip .s-lab {{ font-size: 12px; }}
+        .chip         {{ font-size: 12px; padding: 4px 12px; }}
+
+        /* Push content below the fixed 56px mobile top bar.
+           Streamlit's stVerticalBlock uses a 16px flex gap between children.
+           We collapse 2 of the 5 dead-zone containers (radio + desktop header)
+           entirely via display:none so they're removed from the flex flow.
+           That leaves 3 zero-height children × 16px = 48px of flex gap.
+           padding-top: 16px + 48px = 64px → first content at 64px, 8px below bar. */
+        section[data-testid="stMain"] .block-container {{ padding-top: 16px !important; }}
+        .stApp {{ border-top: none !important; }}
+
+        /* Suppress Streamlit's own top bar completely on mobile —
+           our mob-hdr replaces it. stHeader contains the user avatar
+           (profile photo on Streamlit Cloud) and status widget. */
+        [data-testid="stHeader"]       {{ display: none !important; }}
+        [data-testid="stStatusWidget"] {{ display: none !important; }}
+        [data-testid="stDecoration"]   {{ display: none !important; }}
+
+        /* Hide desktop chrome that duplicates the mobile bar */
+        .brand-head, .status {{ display: none !important; }}
+        /* Collapse the whole nav radio widget (not just the radiogroup inside) */
+        [data-testid="stRadio"] {{ display: none !important; }}
+        div[role="radiogroup"] {{ display: none !important; }}
+        /* Collapse the desktop header columns row entirely — :has() is
+           supported in Chrome 105+ / Safari 15.4+ / all modern mobile.
+           Eliminates the blank gap between mob-hdr and the first card. */
+        [data-testid="stHorizontalBlock"]:has(.brand-head) {{ display: none !important; }}
+
+        /* Remove the radio and desktop-header containers from the flex flow
+           entirely so their 16px flex-gap slot is reclaimed. The mobile-nav
+           container CANNOT be display:none (it hosts the position:fixed mob-hdr),
+           so it stays in flow — its 16px gap is accounted for in padding-top above. */
+        [data-testid="stElementContainer"]:has([data-testid="stRadio"]) {{ display: none !important; }}
+        [data-testid="stLayoutWrapper"]:has(.brand-head) {{ display: none !important; }}
+        /* Mobile bar + drawer: switch from display:none to visible */
+        .mob-hdr    {{ display: flex !important; }}
+        .mob-ov     {{ display: block !important; }}
+        .mob-drawer {{ display: flex !important; }}
+
+        /* ── Visual polish ───────────────────────────────────────── */
+
+        /* Global link reset — browser blue/underline stripped from all
+           mobile chrome. Per-element colors are re-applied below via their
+           own classes (.mob-nl → INK, .mob-ni-active .mob-nl → LIME). */
+        .mob-hdr a, .mob-drawer a {{
+            text-decoration: none !important;
+            color: inherit !important;
+        }}
+
+        /* Unified screen title — every st.markdown("## ...") on mobile
+           gets the same treatment instead of Streamlit's default ~32-40px. */
+        .stMarkdown h2 {{
+            font-family: 'Space Grotesk', sans-serif !important;
+            font-size: 22px !important;
+            font-weight: 700 !important;
+            letter-spacing: -0.3px !important;
+            line-height: 1.2 !important;
+            margin: 0 0 4px 0 !important;
+            padding: 0 !important;
+        }}
+
+        /* Body text: consistent line height across all screens */
+        .stMarkdown p {{ line-height: 1.5; }}
+
+        /* Touch targets — all buttons ≥ 44px tall */
+        .stButton > button, .stDownloadButton > button {{
+            min-height: 44px !important;
+        }}
+
+        /* Compact st.metric() — columns stack to 100% width on mobile and
+           each metric would otherwise consume ~100px. This halves that. */
+        [data-testid="stMetricLabel"] p {{
+            font-size: 11px !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.08em !important;
+            color: {MUTED} !important;
+            margin: 0 !important;
+        }}
+        [data-testid="stMetricValue"] div {{
+            font-size: 26px !important;
+            font-weight: 700 !important;
+            line-height: 1.15 !important;
+        }}
+        [data-testid="stMetricDelta"] div {{
+            font-size: 11px !important;
+        }}
+    }}
+
+    /* ── Mobile top bar + drawer ─────────────────────────────────────── */
+    /* Hidden checkbox that drives the drawer open/close */
+    .mob-tgl {{ display: none !important; }}
+
+    /* Fixed top bar (mobile only — hidden by default, shown at ≤640px).
+       z-index 999998 beats Streamlit's internal header (~999990) while
+       sitting below the chat bubble (99999 is per-component; the bubble
+       injection runs in window.parent so its 99999 is in a different layer).
+       isolation: isolate creates a fresh stacking context so transforms on
+       Streamlit ancestor divs can't drag us into their layer. */
+    .mob-hdr {{
+        display: none;
+        position: fixed; top: 0; left: 0; right: 0; height: 56px;
+        background: #0e1520; border-bottom: 1px solid {BORDER};
+        align-items: center; justify-content: space-between;
+        padding: 0 16px; z-index: 999998;
+        isolation: isolate;
+    }}
+    .mob-ham {{
+        font-size: 24px; color: {INK}; text-decoration: none;
+        width: 44px; height: 44px; display: flex; align-items: center;
+        justify-content: center; border-radius: 8px; flex-shrink: 0;
+        cursor: pointer; -webkit-tap-highlight-color: transparent;
+        /* label element — no button styles needed */
+        background: none; border: none; padding: 0;
+    }}
+    .mob-ham:active {{ background: #1a2230; }}
+    /* .mob-wm is now just the link wrapper — SVG provides the visual */
+    .mob-wm {{
+        display: flex; align-items: center;
+        text-decoration: none; flex-shrink: 0;
+    }}
+    .mob-dot {{ color: {LIME}; }}
+    /* SVG logo container — fits the 56px bar with room to breathe */
+    .mob-logo-wrap {{ width: 120px; }}
+    .mob-logo-wrap svg {{ width: 100%; height: auto; display: block; }}
+
+    /* Dim backdrop — visible when drawer is open */
+    .mob-ov {{
+        display: none;
+        position: fixed; inset: 0; background: rgba(0,0,0,0.62);
+        z-index: 8998; opacity: 0; pointer-events: none;
+        transition: opacity .25s ease;
+    }}
+    /* Slide-in drawer — starts just below the 56px bar so the bar stays visible */
+    .mob-drawer {{
+        display: none;
+        position: fixed; top: 56px; left: -292px; bottom: 0; width: 276px;
+        background: #0e1520; border-right: 1px solid {BORDER};
+        z-index: 8999; flex-direction: column; overflow-y: auto;
+        transition: left .25s cubic-bezier(.4,0,.2,1);
+        border-top: 1px solid {BORDER};
+    }}
+    /* Nav item links inside the drawer */
+    .mob-nav {{ flex: 1; padding: 6px 0; display: flex; flex-direction: column; }}
+    .mob-ni {{
+        display: flex; align-items: center;
+        padding: 14px 20px; border-left: 3px solid transparent;
+        text-decoration: none; transition: background .1s ease;
+        -webkit-tap-highlight-color: transparent;
+    }}
+    .mob-ni:active {{ background: rgba(166,206,57,0.07); }}
+    .mob-ni-active {{
+        background: rgba(166,206,57,0.08);
+        border-left-color: {LIME};
+    }}
+    .mob-nl {{ font-size: 16px; font-weight: 600; color: {INK}; }}
+    .mob-ni-active .mob-nl {{ color: {LIME}; }}
+    /* Drawer footer */
+    .mob-df {{
+        padding: 16px 20px; border-top: 1px solid {BORDER};
+        display: flex; flex-direction: column; gap: 4px;
+    }}
+    .mob-lc {{ font-size: 13px; color: {MUTED}; }}
+    .mob-li {{ font-size: 12px; color: {LIME}; font-weight: 600; letter-spacing: .05em; }}
+
+    /* CSS toggle: when checkbox is checked, slide drawer + show overlay */
+    .mob-tgl:checked ~ .mob-ov    {{ opacity: 1; pointer-events: all; }}
+    .mob-tgl:checked ~ .mob-drawer {{ left: 0; }}
+
+    /* Desktop: never show mobile elements */
+    @media (min-width: 641px) {{
+        .mob-hdr, .mob-ov, .mob-drawer {{ display: none !important; }}
     }}
     </style>
     """,
@@ -213,10 +580,10 @@ st.markdown(
 )
 
 
-# ── API Client ────────────────────────────────────────────────────────────────
+# ── API client ────────────────────────────────────────────────────────────────
 
 class APIClient:
-    """Thin wrapper around the Enehano FastAPI scoring backend."""
+    """Thin wrapper around the FastAPI scoring backend."""
 
     BASE = API_BASE
     TIMEOUT = 60
@@ -231,7 +598,7 @@ class APIClient:
             return None
 
     @classmethod
-    def _post(cls, path: str, payload: dict) -> dict | None:
+    def _post(cls, path: str, payload: dict) -> dict | list | None:
         try:
             r = requests.post(f"{cls.BASE}{path}", json=payload, timeout=cls.TIMEOUT)
             r.raise_for_status()
@@ -245,44 +612,21 @@ class APIClient:
         return result is not None and result.get("status") == "ok"
 
     @classmethod
-    def score_single(cls, lead_dict: dict) -> dict | None:
-        """POST /score - full LeadInput payload."""
-        return cls._post("/score", lead_dict)
-
-    @classmethod
-    def score_batch(cls, leads: list[dict], include_drivers: bool = False) -> list[dict] | None:
-        """POST /score/batch - up to 500 leads."""
-        result = cls._post("/score/batch", {
-            "leads": leads,
-            "include_drivers": include_drivers,
-        })
-        return result  # list[ScoreOutput]
+    def score_batch(cls, leads: list[dict], include_drivers: bool = False) -> list | None:
+        return cls._post("/score/batch", {"leads": leads, "include_drivers": include_drivers})
 
     @classmethod
     def score_enrich(cls, ico: str, behavioral: dict) -> dict | None:
-        """POST /score/enrich - IČO + behavioral fields only."""
         return cls._post("/score/enrich", {"ico": ico, **behavioral})
 
-    @classmethod
-    def metrics(cls) -> dict | None:
-        return cls._get("/metrics")
+
+_api_online = False if EMBEDDED else APIClient.health()
 
 
-# ── Check API availability ────────────────────────────────────────────────────
-_api_online = APIClient.health()
-if not _api_online:
-    st.error(
-        "⚠️ **FastAPI backend is offline.** "
-        "Start it with: `uvicorn api:app --host 0.0.0.0 --port 8000 --reload`  \n"
-        "Scoring features are unavailable until the server is running."
-    )
-
-
-# ── Data loading (local CSV - no inference) ───────────────────────────────────
+# ── Data loading ──────────────────────────────────────────────────────────────
 
 @st.cache_data
 def load_data() -> pd.DataFrame:
-    """Load the raw lead dataset from CSV (no model inference)."""
     df = pd.read_csv(LEAD_TRAIN, dtype={"IČO": str, "Legal_Form_Code": str})
     df["IČO"] = df["IČO"].str.zfill(8)
     df["Legal_Form_Code"] = df["Legal_Form_Code"].str.strip()
@@ -291,240 +635,1078 @@ def load_data() -> pd.DataFrame:
 
 @st.cache_data
 def load_metrics() -> dict | None:
-    """Load pre-computed model metrics from JSON (written by train.py)."""
     return json.loads(METRICS_JSON.read_text()) if METRICS_JSON.exists() else None
 
 
 @st.cache_data
 def load_importance() -> pd.DataFrame | None:
-    """Load feature importances CSV written by train.py."""
     return pd.read_csv(FEATURE_IMPORTANCE) if FEATURE_IMPORTANCE.exists() else None
 
 
 @st.cache_data
 def load_val_predictions() -> pd.DataFrame | None:
-    """Load held-out validation predictions written by train.py."""
     return pd.read_csv(VAL_PREDICTIONS) if VAL_PREDICTIONS.exists() else None
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def score_pipeline_via_api(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Score the full dataset via the /score/batch endpoint.
-    Results are cached for 5 minutes to avoid redundant network calls.
-    Stops on API failure instead of showing fake AI values.
-    """
-    if not _api_online:
-        st.error("FastAPI backend is offline, so AI scoring cannot be computed.")
-        st.stop()
-
-    # Build a minimal payload - only the fields the API expects as LeadInput.
-    api_cols = [c for c in df.columns if c not in API_PAYLOAD_EXCLUDE_COLS]
-    leads_payload = df[api_cols].fillna(0).to_dict(orient="records")
-
-    results: list[dict] = []
-    for start in range(0, len(leads_payload), 500):
-        batch = leads_payload[start:start + 500]
-        batch_result = APIClient.score_batch(batch, include_drivers=False)
-        if not batch_result:
-            st.error(
-                "AI scoring failed while processing leads "
-                f"{start + 1:,}-{start + len(batch):,}. "
-                "Check that the FastAPI backend is running and healthy."
-            )
-            st.stop()
-        results.extend(batch_result)
+def _apply_scores(df: pd.DataFrame, results: list[dict]) -> pd.DataFrame:
     out = df.copy()
-    if results and len(results) == len(df):
-        out["AI_Score"]           = [r["ai_score"]         for r in results]
-        out["Segment"]            = [r["segment"]           for r in results]
-        out["Expected_Win_%"]     = [r["expected_win_pct"]  for r in results]
-        out["Rule_Score"]         = [r["rule_score"]        for r in results]
-        out["top_drivers"]        = [r["top_drivers"]       for r in results]
-        out["P_Win_If_Converted"] = [r["p_win_if_converted_pct"] for r in results]
-    else:
-        st.error(
-            "AI scoring returned an unexpected number of results "
-            f"({len(results):,} for {len(df):,} leads)."
-        )
-        st.stop()
+    out["AI_Score"]           = [r["ai_score"]               for r in results]
+    out["Segment"]            = [r["segment"]                for r in results]
+    out["Expected_Win_%"]     = [r["expected_win_pct"]       for r in results]
+    out["Rule_Score"]         = [r["rule_score"]             for r in results]
+    out["top_drivers"]        = [r["top_drivers"]            for r in results]
+    out["P_Win_If_Converted"] = [r["p_win_if_converted_pct"] for r in results]
     return out
 
 
-# ── Load data ─────────────────────────────────────────────────────────────────
+@st.cache_data(ttl=300, show_spinner="Scoring the pipeline...")
+def score_pipeline_via_api(df: pd.DataFrame) -> pd.DataFrame:
+    """Score every lead — via embedded scorer or FastAPI backend."""
+    api_cols = [c for c in df.columns if c not in API_PAYLOAD_EXCLUDE_COLS]
+
+    if EMBEDDED:
+        results = _scorer.score_dataframe(df[api_cols].fillna(0))
+        if len(results) != len(df):
+            st.error("Embedded scoring returned an unexpected result. Try refreshing the page.")
+            st.stop()
+        return _apply_scores(df, results)
+
+    leads_payload = df[api_cols].fillna(0).to_dict(orient="records")
+    results = []
+    for start in range(0, len(leads_payload), 500):
+        batch_result = APIClient.score_batch(leads_payload[start:start + 500])
+        if not batch_result:
+            st.error("Scoring is unavailable right now. The page will work again once the scoring service is reachable.")
+            st.stop()
+        results.extend(batch_result)
+
+    if len(results) != len(df):
+        st.error("Scoring returned an unexpected result. Try refreshing the page.")
+        st.stop()
+
+    return _apply_scores(df, results)
+
+
+# ── Plain-language reason engine ─────────────────────────────────────────────
+# Reads the lead's own behaviour and produces ONE action-phrased reason.
+# Deterministic and local: works even when the scoring API can't return
+# SHAP drivers, so the call queue never shows an empty "why".
+
+def call_reason(row: pd.Series) -> str:
+    days_quiet = int(row.get("Days_Since_Last_Activity__c", 0) or 0)
+    meetings   = int(row.get("Meetings_Held__c", 0) or 0)
+    web        = int(row.get("Web_Interactions__c", 0) or 0)
+    opens      = int(row.get("Email_Opens__c", 0) or 0)
+    sent       = int(row.get("Emails_Sent__c", 0) or 0)
+    ttfr       = float(row.get("Time_to_First_Response_h__c", 99) or 99)
+
+    if int(row.get("Proposal_Sent__c", 0) or 0):
+        return "Proposal on the table - follow up before it goes stale"
+    if int(row.get("Demo_Requested__c", 0) or 0):
+        return "Asked for a demo - strike while interest is hot"
+    if meetings >= 2:
+        return f"{meetings} meetings in - momentum is building, keep it moving"
+    if ttfr <= 2:
+        return "Replied within two hours - that speed means intent"
+    if sent >= 3 and opens >= sent * 0.8:
+        return "Opens almost every email - a warm audience waiting for a call"
+    if web >= 10:
+        return f"{web} website visits - they are actively researching you"
+    if str(row.get("Rating", "")) == "Hot" and days_quiet <= 7:
+        return "Flagged hot by sales and still fresh - confirm and close"
+    if 7 <= days_quiet <= 21:
+        return f"Quiet for {days_quiet} days - call before this one cools off"
+    return "Strong profile fit - worth a conversation this week"
+
+
+def driver_phrase(driver: str) -> str:
+    """Turn a raw model driver name into plain business language."""
+    key = driver.replace("__c", "").strip()
+    mapping = {
+        "Days_Since_Last_Activity": "How recently they were active",
+        "Days_in_Pipeline":         "Time spent in the pipeline",
+        "Time_to_First_Response_h": "Speed of their first reply",
+        "Web_Interactions":         "Website activity",
+        "Email_Opens":              "Email opens",
+        "Email_Clicks":             "Email engagement",
+        "Email_Open_Rate":          "Email open rate",
+        "Emails_Sent":              "Email touchpoints",
+        "Meetings_Held":            "Meetings held",
+        "Proposal_Sent":            "Proposal already sent",
+        "Demo_Requested":           "Demo requested",
+        "Form_Submissions":         "Forms filled on the site",
+        "Content_Downloads":        "Content downloads",
+        "Chatbot_Interactions":     "Chat conversations",
+        "LinkedIn_Viewed":          "LinkedIn research",
+        "Calls_Made":               "Calls made so far",
+        "Annual_Revenue_MCZK":      "Company revenue",
+        "NumberOfEmployees":        "Company size",
+        "Company_Age_Years":        "Company age",
+    }
+    if key in mapping:
+        return mapping[key]
+    return key.replace("_", " ").capitalize()
+
+
+def chip(seg: str) -> str:
+    c = SEG_COLOR.get(seg, SLATE)
+    return (
+        f"<span class='chip' style='color:{c};border-color:{c};"
+        f"background:{c}1f'>{seg} priority</span>"
+    )
+
+
+def styled(fig, height: int | None = None):
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="DM Sans, sans-serif", color=MUTED, size=13),
+        title_font=dict(color=INK, size=15),
+        margin=dict(l=8, r=8, t=44, b=8),
+        legend=dict(font=dict(color=MUTED)),
+    )
+    fig.update_xaxes(gridcolor=BORDER, zerolinecolor=BORDER)
+    fig.update_yaxes(gridcolor=BORDER, zerolinecolor=BORDER)
+    if height:
+        fig.update_layout(height=height)
+    return fig
+
+
+# ── Load everything ───────────────────────────────────────────────────────────
 master_df     = load_data()
 metrics       = load_metrics()
 importance_df = load_importance()
 val_df        = load_val_predictions()
-scored_df     = score_pipeline_via_api(master_df)
 
+if not _api_online and not EMBEDDED:
+    _logo = (f"<div style='width:210px;margin:0 auto'>{LOGO_SVG.read_text(encoding='utf-8')}</div>"
+             if LOGO_SVG.exists() else "<p class='wordmark'>enehano<span class='dot'>.</span></p>")
+    st.markdown(
+        "<div style='text-align:center;padding:80px 0'>"
+        f"{_logo}"
+        "<p style='font-size:17px;margin-top:24px'>The scoring service isn't reachable right now.</p>"
+        f"<p style='color:{MUTED}'>Once it's back, this page will load your ranked pipeline automatically.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.stop()
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+scored_df = score_pipeline_via_api(master_df)
 
-def segment_label(score: float) -> tuple[str, str]:
-    seg = score_segment(score)
-    return seg, {"High": ENEHANO_GREEN, "Medium": WARN}.get(seg, DANGER)
+# ── Swipe gesture callback: JS sets ?swi=<new_idx>, we read + clear it ───────
+_swi_raw = st.query_params.get("swi")
+if _swi_raw is not None:
+    try:
+        st.session_state["swipe_idx"] = int(_swi_raw)
+        if st.query_params.get("swi_action") == "call":
+            st.session_state.setdefault("swipe_called", set())
+            _prev_idx = st.session_state["swipe_idx"] - 1
+            _swipe_pool = (
+                scored_df.sort_values("AI_Score", ascending=False)
+                .head(20).reset_index(drop=True)
+            )
+            if 0 <= _prev_idx < len(_swipe_pool):
+                _ico = str(_swipe_pool.iloc[_prev_idx].get("IČO", ""))
+                if _ico:
+                    st.session_state["swipe_called"].add(_ico)
+    except (ValueError, TypeError):
+        pass
+    st.query_params.clear()
+
+# ── Mobile nav: ?_nav=<screen> → set session nav, avoid full reload ───────────
+_nav_param = st.query_params.get("_nav")
+if _nav_param and _nav_param in ["Today", "Swipe", "Radar", "All leads",
+                                  "Lead profile", "For managers"]:
+    st.session_state["nav"] = _nav_param
+    del st.query_params["_nav"]
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
-hdr_l, hdr_c, hdr_r = st.columns([1, 2, 1])
-with hdr_c:
+def _logo_html() -> str:
+    """Inline the brand SVG inside .logo-wrap so CSS controls the width."""
     if LOGO_SVG.exists():
-        st.image(str(LOGO_SVG), width="stretch")
+        svg = LOGO_SVG.read_text(encoding="utf-8")
+        return f"<div class='logo-wrap'>{svg}</div>"
+    return "<p class='wordmark'>enehano<span class='dot'>.</span></p>"
+
+
+h_left, h_mid, h_right = st.columns([2, 3, 2])
+with h_left:
     st.markdown(
-        "<p class='hero' style='text-align:center'>Lead Intelligence</p>"
-        "<p class='subtle' style='text-align:center'>Know which leads to call first - backed by data, not guesswork.</p>",
+        f"<div class='brand-head'>{_logo_html()}"
+        "<p class='tagline' style='margin-top:6px'>Lead intelligence</p></div>",
+        unsafe_allow_html=True,
+    )
+with h_right:
+    st.markdown(
+        "<p class='status' style='margin-top:14px'>"
+        "<span class='live-dot'></span>Scoring live<br>"
+        f"{len(scored_df):,} leads ranked</p>",
         unsafe_allow_html=True,
     )
 
-(tab_overview, tab_value, tab_leads, tab_cards, tab_profile,
- tab_map, tab_insights) = st.tabs([
-    "🏠 Overview",
-    "💰 Business Value",
-    "🎯 My Leads",
-    "🃏 Top Lead Cards",
-    "🏢 Lead Profile",
-    "🗺 Regional Map",
-    "🔬 Model Insights",
-])
+# ── Mobile top bar + drawer (pure HTML/CSS, no iframes) ───────────────────────
+# Only visible at ≤640px (CSS controls this). Uses a hidden checkbox for
+# the open/close toggle (pure CSS, zero JS needed). Nav items are <a href>
+# links that set ?_nav=<screen> — handled above at startup.
+
+# Embed SVG inline so it inherits our CSS sizing (no separate network request)
+_mob_svg = LOGO_SVG.read_text(encoding="utf-8") if LOGO_SVG.exists() else ""
+_mob_logo = (
+    f"<div class='mob-logo-wrap'>{_mob_svg}</div>"
+    if _mob_svg else
+    "enehano<span class='mob-dot'>.</span>"
+)
+
+_SCREENS_META = ["Today", "Swipe", "Radar", "All leads", "Lead profile", "For managers"]
+_mob_nav_items = "".join(
+    f"<a href='?_nav={s}' class='mob-ni{' mob-ni-active' if s == st.session_state.get('nav','Today') else ''}'>"
+    f"<span class='mob-nl'>{s}</span></a>"
+    for s in _SCREENS_META
+)
+st.markdown(
+    f"""
+    <input type="checkbox" id="mob-tgl" class="mob-tgl">
+    <div class="mob-hdr">
+      <label for="mob-tgl" class="mob-ham" aria-label="Open navigation">&#9776;</label>
+      <a href="?_nav=Today" class="mob-wm">{_mob_logo}</a>
+      <span style="width:44px;flex-shrink:0"></span>
+    </div>
+    <label for="mob-tgl" class="mob-ov"></label>
+    <div class="mob-drawer">
+      <nav class="mob-nav">{_mob_nav_items}</nav>
+      <div class="mob-df">
+        <span class="mob-lc">{len(scored_df):,} leads ranked</span>
+        <span class="mob-li">&#9679;&nbsp;Scoring live</span>
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ── Swipe card HTML builder ───────────────────────────────────────────────────
+def _build_swipe_html(cards: list[dict], idx: int) -> str:
+    """
+    Single-card swipe component for the Swipe screen.
+
+    Mobile (≤640px): horizontal drag with a 90px threshold triggers
+    real navigation — the card flies off-screen and window.parent.location
+    is set to ?swi=<next_idx>&swi_action=skip|call.  The handler at the
+    top of this file reads those params, advances swipe_idx, and records
+    the call in swipe_called, matching what the Skip / Call buttons do.
+
+    Desktop (≥641px): card hidden; a prompt is shown instead.  The
+    Skip / Call buttons below the component remain the fallback on all
+    screen sizes.
+    """
+    if not cards:
+        return "<p style='color:#7a8898;text-align:center;padding:40px'>No leads.</p>"
+    idx_safe  = max(0, min(idx, len(cards) - 1))
+    c         = cards[idx_safe]
+    total     = len(cards)
+    at_end    = idx_safe >= total - 1
+    at_end_js = "true" if at_end else "false"
+    next_idx  = min(idx_safe + 1, total - 1)
+    prog_note = " · All done — tap Reset to start over" if at_end else ""
+
+    chips = "".join(f"<span class='ch'>{d}</span>" for d in c["drivers"])
+
+    return f"""<!doctype html><html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0;
+   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}}
+body{{background:transparent;padding:0 2px;overflow:hidden;}}
+@keyframes slideIn{{from{{opacity:0;transform:translateX(32px)}}to{{opacity:1;transform:none}}}}
+.card{{background:#1a2230;border-radius:18px;padding:22px 18px 18px;
+       border:1.5px solid #2a3340;position:relative;overflow:hidden;
+       animation:slideIn .22s cubic-bezier(.4,0,.2,1) both;
+       touch-action:pan-y;user-select:none;}}
+.row{{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}}
+.co{{font-size:18px;font-weight:700;color:#f0f4f8;line-height:1.25;}}
+.meta{{font-size:12px;color:#7a8898;margin-top:4px;}}
+.pill{{background:{c["color"]}22;color:{c["color"]};font-size:25px;font-weight:800;
+       border-radius:10px;padding:5px 11px;text-align:center;min-width:56px;flex-shrink:0;}}
+.seg{{font-size:10px;text-align:center;color:{c["color"]};font-weight:600;
+      letter-spacing:.05em;margin-top:3px;}}
+.hr{{height:1px;background:#2a3340;margin:13px 0;}}
+.why{{color:#a6ce39;font-size:13px;font-weight:600;margin-bottom:9px;}}
+.chips{{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px;}}
+.ch{{background:#1e2a1a;color:#a6ce39;border-radius:20px;padding:3px 9px;font-size:11px;}}
+.stats{{display:flex;gap:22px;}}
+.sn{{font-size:16px;font-weight:700;color:#f0f4f8;}}
+.sl{{font-size:10px;color:#7a8898;text-transform:uppercase;letter-spacing:.05em;}}
+.prog{{text-align:center;color:#7a8898;font-size:12px;margin-top:11px;}}
+.ov{{position:absolute;inset:0;pointer-events:none;opacity:0;
+     display:flex;align-items:center;justify-content:center;
+     font-size:60px;border-radius:18px;transition:opacity .08s;}}
+.ov-s{{background:rgba(226,92,92,.16);}} .ov-c{{background:rgba(166,206,57,.16);}}
+/* Desktop prompt — base is none; the min-width rule enables it.
+   Base must come BEFORE the media query or the cascade kills the override. */
+.desk{{display:none;align-items:center;justify-content:center;height:200px;
+       color:#7a8898;font-size:15px;text-align:center;padding:32px;line-height:1.6;}}
+@media (min-width:641px) {{ .card{{display:none;}} .desk{{display:flex;}} }}
+</style></head><body>
+<div class="card" id="card">
+  <div class="ov ov-s" id="ovs">✕</div>
+  <div class="ov ov-c" id="ovc">✓</div>
+  <div class="row">
+    <div>
+      <div class="co">{c["company"]}</div>
+      <div class="meta">{c["industry"]} · {c["region"]} · {c["source"]}</div>
+    </div>
+    <div>
+      <div class="pill">{c["score"]:.0f}</div>
+      <div class="seg">{c["segment"]}</div>
+    </div>
+  </div>
+  <div class="hr"></div>
+  <div class="why">{c["action"]}</div>
+  <div class="chips">{chips}</div>
+  <div class="stats">
+    <div><div class="sn">{c["expected"]:.0f}%</div><div class="sl">exp win</div></div>
+    <div><div class="sn">{c["rule"]}</div><div class="sl">rule score</div></div>
+  </div>
+  <div class="prog">{idx_safe + 1} / {total}{prog_note}</div>
+</div>
+<div class="desk">Swipe triage works best on&nbsp;mobile.<br>Use the Skip / Call buttons below.</div>
+<script>
+var card = document.getElementById('card');
+var ovs  = document.getElementById('ovs');
+var ovc  = document.getElementById('ovc');
+var sx = 0, sy = 0, cx = 0, on = false;
+var THRESHOLD = 90;
+var atEnd   = {at_end_js};
+var nextIdx = {next_idx};
+
+card.addEventListener('touchstart', function(e) {{
+  sx = e.touches[0].clientX;
+  sy = e.touches[0].clientY;
+  cx = sx;
+  on = true;
+}}, {{passive: true}});
+
+card.addEventListener('touchmove', function(e) {{
+  if (!on) return;
+  cx = e.touches[0].clientX;
+  var dx = cx - sx, dy = e.touches[0].clientY - sy;
+  if (Math.abs(dy) > Math.abs(dx)) return;
+  var t = Math.min(Math.abs(dx) / 110, 1);
+  card.style.transform = 'translateX(' + dx * 0.22 + 'px) rotate(' + dx * 0.018 + 'deg)';
+  if (dx < 0) {{ ovs.style.opacity = t * 0.85; ovc.style.opacity = 0; }}
+  else        {{ ovc.style.opacity = t * 0.85; ovs.style.opacity = 0; }}
+}}, {{passive: true}});
+
+card.addEventListener('touchend', function() {{
+  if (!on) return;
+  on = false;
+  var dx = cx - sx;
+  if (!atEnd && Math.abs(dx) >= THRESHOLD) {{
+    var dir    = dx < 0 ? -1 : 1;
+    var action = dx < 0 ? 'skip' : 'call';
+    /* Fly card off-screen, then advance the parent page */
+    card.style.transition = 'transform .28s ease, opacity .28s ease';
+    card.style.transform  = 'translateX(' + (dir * 110) + '%) rotate(' + (dir * 18) + 'deg)';
+    card.style.opacity    = '0';
+    ovs.style.opacity = 0; ovc.style.opacity = 0;
+    setTimeout(function() {{
+      window.parent.location.href = '?swi=' + nextIdx + '&swi_action=' + action;
+    }}, 300);
+  }} else {{
+    /* Snap back — below threshold or at end of deck */
+    card.style.transition = 'transform .18s ease';
+    card.style.transform  = '';
+    ovs.style.opacity = 0; ovc.style.opacity = 0;
+    setTimeout(function() {{ card.style.transition = ''; }}, 200);
+  }}
+}});
+</script></body></html>"""
 
 
-# ── TAB: Overview ─────────────────────────────────────────────────────────────
-with tab_overview:
+# ── Navigation (session-state driven so screens can hand off to each other) ──
+SCREENS = ["Today", "Swipe", "Radar", "All leads", "Lead profile", "For managers"]
+# Desktop pill-nav omits Swipe — mobile drawer is its only entry point.
+SCREENS_DESKTOP = ["Today", "Radar", "All leads", "Lead profile", "For managers"]
+
+if "_goto" in st.session_state:
+    st.session_state["nav"] = st.session_state.pop("_goto")
+st.session_state.setdefault("nav", "Today")
+
+# Radio shows desktop screens only. If current nav is "Swipe" (set by mobile
+# drawer), highlight "Today" in the radio but don't override session state.
+_desk_default = st.session_state["nav"] if st.session_state["nav"] in SCREENS_DESKTOP else "Today"
+_radio_pick = st.radio("Navigation", SCREENS_DESKTOP,
+                        index=SCREENS_DESKTOP.index(_desk_default),
+                        horizontal=True, label_visibility="collapsed")
+if _radio_pick != _desk_default:
+    st.session_state["nav"] = _radio_pick
+    st.rerun()
+
+nav = st.session_state["nav"]
+st.write("")
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SCREEN: Today - the call queue
+# ══════════════════════════════════════════════════════════════════════════════
+if nav == "Today":
+    queue = scored_df.sort_values("AI_Score", ascending=False).head(5)
+    queue_wins = float((queue["Expected_Win_%"] / 100).sum())
+    high_count = int((scored_df["Segment"] == "High").sum())
+
+    today = pd.Timestamp.now()
+    st.markdown(f"<p class='eyebrow'>{today:%A, %d %B}</p>", unsafe_allow_html=True)
+    st.markdown(
+        "<p class='hero-line'>Five calls today.<br>"
+        f"<span class='hl'>{queue_wins:.1f} expected wins.</span></p>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"<p style='color:{MUTED};font-size:15px'>Ranked by the model. "
+        "Work top to bottom - each card tells you why it's worth the call.</p>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<div class='stat-strip'>"
+        f"<div><div class='s-val'>{len(scored_df):,}</div><div class='s-lab'>Leads ranked</div></div>"
+        f"<div><div class='s-val'>{high_count:,}</div><div class='s-lab'>High priority</div></div>"
+        f"<div><div class='s-val'>{queue['AI_Score'].iloc[0]:.0f}</div><div class='s-lab'>Top score</div></div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.write("")
+
+    for rank, (_, row) in enumerate(queue.iterrows(), start=1):
+        seg = row["Segment"]
+        col = SEG_COLOR.get(seg, SLATE)
+        with st.container(border=True):
+            st.markdown(
+                f"<div class='q-card'>"
+                f"<div class='q-card-rank'>{rank}</div>"
+                f"<div class='q-card-body'>"
+                f"<div class='q-co'>{row['Company_Name']}</div>"
+                f"<div class='q-meta'>{row['Industry']} · {row['Region']} · via {row['LeadSource']}</div>"
+                f"<div class='q-why'>{call_reason(row)}</div>"
+                f"</div>"
+                f"<div class='q-card-right'>"
+                f"<div class='q-score' style='color:{col}'>{row['AI_Score']:.0f}</div>"
+                f"<div style='margin-top:6px'>{chip(seg)}</div>"
+                f"</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Open profile", key=f"open_{row['IČO']}",
+                         use_container_width=True):
+                st.session_state["selected_ico"] = row["IČO"]
+                st.session_state["_goto"] = "Lead profile"
+                st.rerun()
+
+    queue_wins = float((queue["Expected_Win_%"] / 100).sum())
+    st.markdown(
+        f"<p style='color:{MUTED};font-size:14px'>The queue re-ranks itself "
+        "as new activity lands in the CRM.</p>",
+        unsafe_allow_html=True,
+    )
+
+    st.write("")
+    _, mid, _ = st.columns([2, 1.4, 2])
+    with mid:
+        if st.button("See all leads", type="primary", use_container_width=True):
+            st.session_state["_goto"] = "All leads"
+            st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SCREEN: Swipe — one card at a time with touch gesture support
+# ══════════════════════════════════════════════════════════════════════════════
+elif nav == "Swipe":
+    from streamlit.components.v1 import html as _sv_html
+    from ui_cards import _row_to_card as _to_card
+
+    st.markdown("## Top leads")
+    st.markdown(
+        f"<p style='color:{MUTED};margin-top:-8px'>"
+        "Quick triage — tap <b>Call</b> to queue a lead or <b>Skip</b> to move on. "
+        "Drag the card to preview the decision.</p>",
+        unsafe_allow_html=True,
+    )
+
+    pool = (
+        scored_df.sort_values("AI_Score", ascending=False)
+        .head(20).reset_index(drop=True)
+    )
+
+    if pool.empty:
+        st.info("No scored leads available.")
+    else:
+        cards = [_to_card(r) for _, r in pool.iterrows()]
+
+        st.session_state.setdefault("swipe_idx", 0)
+        st.session_state.setdefault("swipe_called", set())
+
+        sw_idx = int(st.session_state["swipe_idx"])
+        if sw_idx >= len(cards):
+            sw_idx = 0
+            st.session_state["swipe_idx"] = 0
+
+        _sv_html(_build_swipe_html(cards, sw_idx), height=330, scrolling=False)
+
+        col_skip, col_call = st.columns(2)
+        with col_skip:
+            if st.button("← Skip", use_container_width=True, key="swipe_skip_btn"):
+                st.session_state["swipe_idx"] = min(sw_idx + 1, len(cards) - 1)
+                st.rerun()
+        with col_call:
+            if st.button("📞 Call this lead", use_container_width=True,
+                         type="primary", key="swipe_call_btn"):
+                st.session_state["swipe_called"].add(cards[sw_idx]["ico"])
+                st.session_state["swipe_idx"] = min(sw_idx + 1, len(cards) - 1)
+                st.toast(f"Queued: {cards[sw_idx]['company']}", icon="✅")
+                st.rerun()
+
+        called_count = len(st.session_state["swipe_called"])
+        if called_count:
+            st.markdown(
+                f"<p style='text-align:center;color:{LIME};font-size:13px;"
+                f"margin-top:6px'>"
+                f"{called_count} lead{'s' if called_count > 1 else ''} queued for a call"
+                "</p>",
+                unsafe_allow_html=True,
+            )
+
+        st.write("")
+        if st.button("Open full profile", use_container_width=True, key="swipe_open_btn"):
+            st.session_state["selected_ico"] = cards[sw_idx]["ico"]
+            st.session_state["_goto"] = "Lead profile"
+            st.rerun()
+
+        if st.button("Reset deck", use_container_width=True, key="swipe_reset_btn"):
+            st.session_state["swipe_idx"] = 0
+            st.session_state["swipe_called"] = set()
+            st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SCREEN: All leads
+# ══════════════════════════════════════════════════════════════════════════════
+elif nav == "All leads":
+    st.markdown("## Every lead, ranked")
+    st.markdown(
+        f"<p style='color:{MUTED};margin-top:-8px'>Highest priority first. "
+        "Click any row to open its full profile.</p>",
+        unsafe_allow_html=True,
+    )
+
+    _search = st.text_input("", placeholder="🔍 Search by company name...",
+                             key="all_leads_search", label_visibility="collapsed")
+
+    with st.expander("Filters"):
+        f1, f2, f3, f4 = st.columns(4)
+        with f1:
+            seg_f = st.multiselect("Priority", ["High", "Medium", "Low"],
+                                   default=["High", "Medium"])
+        with f2:
+            ind_f = st.multiselect("Industry", sorted(scored_df["Industry"].unique()))
+        with f3:
+            src_f = st.multiselect("Lead source", sorted(scored_df["LeadSource"].unique()))
+        with f4:
+            reg_f = st.multiselect("Region", sorted(scored_df["Region"].unique()))
+
+    view = scored_df.copy()
+    if _search:
+        view = view[view["Company_Name"].str.contains(_search, case=False, na=False)]
+    if seg_f: view = view[view["Segment"].isin(seg_f)]
+    if ind_f: view = view[view["Industry"].isin(ind_f)]
+    if src_f: view = view[view["LeadSource"].isin(src_f)]
+    if reg_f: view = view[view["Region"].isin(reg_f)]
+    view = view.sort_values("AI_Score", ascending=False)
+
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Leads in view", f"{len(view):,}")
+    k2.metric("High priority", f"{(view['Segment'] == 'High').sum():,}")
+    k3.metric("Expected wins in view", f"{(view['Expected_Win_%'] / 100).sum():,.0f}")
+
+    display_cols = ["IČO", "Company_Name", "Industry", "Region", "LeadSource",
+                    "AI_Score", "Segment", "Expected_Win_%"]
+    selection = st.dataframe(
+        view[display_cols], use_container_width=True, hide_index=True,
+        on_select="rerun", selection_mode="single-row",
+        column_config={
+            "IČO":            st.column_config.TextColumn("Company ID"),
+            "Company_Name":   st.column_config.TextColumn("Company"),
+            "LeadSource":     st.column_config.TextColumn("Source"),
+            "AI_Score":       st.column_config.ProgressColumn(
+                                  "Score", min_value=0, max_value=100, format="%.0f"),
+            "Segment":        st.column_config.TextColumn("Priority"),
+            "Expected_Win_%": st.column_config.NumberColumn(
+                                  "Expected win", format="%.1f%%"),
+        },
+    )
+
+    if selection.selection.rows:
+        st.session_state["selected_ico"] = view.iloc[selection.selection.rows[0]]["IČO"]
+        st.session_state["_goto"] = "Lead profile"
+        st.rerun()
+
+    st.write("")
+    _, btn_col, _ = st.columns([2, 1.6, 2])
+    with btn_col:
+        st.download_button(
+            "Export to CSV for Salesforce",
+            view[display_cols].to_csv(index=False).encode("utf-8"),
+            file_name="enehano_scored_leads.csv", mime="text/csv",
+            use_container_width=True,
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SCREEN: Lead profile
+# ══════════════════════════════════════════════════════════════════════════════
+elif nav == "Lead profile":
+    st.markdown("## Lead profile")
+    st.markdown(
+        f"<p style='color:{MUTED};margin-top:-8px'>"
+        "One company in depth — score breakdown, key signals, and a live what-if simulator.</p>",
+        unsafe_allow_html=True,
+    )
+    ranked = scored_df.sort_values("AI_Score", ascending=False)
+
+    # Text search narrows the list before the selectbox renders — 30k options
+    # in a selectbox is unusable on mobile (native picker, no typing).
+    # Default shows top 100 by score; typing filters to up to 50 matches.
+    _lp_q = st.text_input("", placeholder="🔍 Type company name to search...",
+                            key="lp_search", label_visibility="collapsed")
+    if _lp_q:
+        _filtered = ranked[ranked["Company_Name"].str.contains(
+            _lp_q, case=False, na=False)].head(50)
+    else:
+        _filtered = ranked.head(100)
+
+    # Keep the currently selected company in the list even if it's outside the window
+    _presel = st.session_state.get("selected_ico")
+    if _presel and _presel not in _filtered["IČO"].values:
+        _prerow = ranked[ranked["IČO"] == _presel]
+        if not _prerow.empty:
+            _filtered = pd.concat([_prerow, _filtered]).head(51)
+
+    option_labels = {
+        f"{r['Company_Name']}  ·  {r['AI_Score']:.0f}  ·  {r['IČO']}": r["IČO"]
+        for _, r in _filtered.iterrows()
+    }
+    labels = list(option_labels.keys())
+
+    preselected = st.session_state.get("selected_ico")
+    default_index = 0
+    if preselected:
+        for i, label in enumerate(labels):
+            if label.endswith(preselected):
+                default_index = i
+                break
+
+    picked = st.selectbox("", labels, index=default_index, label_visibility="collapsed")
+    ico = option_labels[picked]
+    st.session_state["selected_ico"] = ico
+    row = scored_df[scored_df["IČO"] == ico].iloc[0]
+
+    st.markdown(f"## {row['Company_Name']}")
+    st.markdown(
+        f"<p style='color:{MUTED};margin-top:-8px'>"
+        f"ID {row['IČO']} · {row.get('Legal_Form_Label', '')} · "
+        f"{row['Industry']} · {row['Region']}</p>",
+        unsafe_allow_html=True,
+    )
+    st.write("")
+
+    col_score, col_why = st.columns([1, 1.35], gap="large")
+
+    # What-if controls live on the page, in the "why" column, under the drivers
+    with col_why:
+        st.markdown("<p class='eyebrow'>What if you acted?</p>", unsafe_allow_html=True)
+        st.markdown(
+            f"<p style='color:{MUTED};font-size:14px;margin-top:-2px'>"
+            "Move a slider - the score on the left updates live.</p>",
+            unsafe_allow_html=True,
+        )
+        w1, w2 = st.columns(2)
+        with w1:
+            sim_ttfr = st.slider("First response time (hours)", 0.1, 72.0,
+                                 float(row["Time_to_First_Response_h__c"]), 0.5,
+                                 key=f"ttfr_{ico}")
+            sim_web  = st.slider("Website visits", 0, 100,
+                                 int(row["Web_Interactions__c"]), key=f"web_{ico}")
+            sim_meet = st.slider("Meetings held", 0, 10,
+                                 int(row["Meetings_Held__c"]), key=f"meet_{ico}")
+        with w2:
+            sim_forms = st.slider("Forms filled", 0, 10,
+                                  int(row
+                                      ["Form_Submissions__c"]), key=f"forms_{ico}")
+            sim_demo = st.checkbox("Demo requested",
+                                   bool(row["Demo_Requested__c"]), key=f"demo_{ico}")
+            sim_li   = st.checkbox("Viewed on LinkedIn",
+                                   bool(row["LinkedIn_Viewed__c"]), key=f"li_{ico}")
+
+    behavioral_override = {
+        "Time_to_First_Response_h__c": sim_ttfr,
+        "Web_Interactions__c":          sim_web,
+        "Meetings_Held__c":             sim_meet,
+        "Form_Submissions__c":          sim_forms,
+        "Demo_Requested__c":            int(sim_demo),
+        "LinkedIn_Viewed__c":           int(sim_li),
+        "Email_Opens__c":              int(row.get("Email_Opens__c", 0)),
+        "Email_Clicks__c":             int(row.get("Email_Clicks__c", 0)),
+        "Emails_Sent__c":              int(row.get("Emails_Sent__c", 0)),
+        "Email_Open_Rate__c":          float(row.get("Email_Open_Rate__c", 0.0)),
+        "Calls_Made__c":               int(row.get("Calls_Made__c", 0)),
+        "Proposal_Sent__c":            int(row.get("Proposal_Sent__c", 0)),
+        "Content_Downloads__c":        int(row.get("Content_Downloads__c", 0)),
+        "Chatbot_Interactions__c":     int(row.get("Chatbot_Interactions__c", 0)),
+        "Days_Since_Last_Activity__c": int(row.get("Days_Since_Last_Activity__c", 30)),
+        "Days_in_Pipeline__c":         int(row.get("Days_in_Pipeline__c", 30)),
+        "Industry":                    str(row.get("Industry", "Technology")),
+        "Size_Band":                   str(row.get("Size_Band", "Small")),
+        "NumberOfEmployees":           int(row.get("NumberOfEmployees", 25)),
+        "Annual_Revenue_MCZK__c":      float(row.get("Annual_Revenue_MCZK__c", 30.0)),
+        "LeadSource":                  str(row.get("LeadSource", "Web")),
+        "Rating":                      str(row.get("Rating", "Warm")),
+        # Firmographics — API fetches these from ARES; embedded reads them from the row
+        "CZ_NACE_Section":       str(row.get("CZ_NACE_Section", "J")),
+        "CZ_NACE_Section_Label": str(row.get("CZ_NACE_Section_Label", "Information and communication")),
+        "Region_Name":           str(row.get("Region_Name", row.get("Region", "Praha"))),
+        "Region_Code":           str(row.get("Region_Code", "CZ010")),
+        "Legal_Form_Code":       str(row.get("Legal_Form_Code", "112")),
+        "Legal_Form_Label":      str(row.get("Legal_Form_Label", "s.r.o.")),
+        "Founding_Year":         int(row.get("Founding_Year", 2010)),
+        "Company_Age_Years":     int(row.get("Company_Age_Years", 15)),
+    }
+
+    original_score = float(row["AI_Score"])
+    if EMBEDDED:
+        sim_result = _scorer.score_lead(behavioral_override)
+    else:
+        sim_result = APIClient.score_enrich(str(ico), behavioral_override)
+
+    if sim_result:
+        new_score    = float(sim_result["ai_score"])
+        expected_win = float(sim_result["expected_win_pct"])
+        api_drivers  = sim_result.get("top_drivers", [])
+    else:
+        new_score    = original_score
+        expected_win = float(row.get("Expected_Win_%", 0))
+        api_drivers  = list(row.get("top_drivers", []) or [])
+
+    seg = score_segment(new_score)
+    seg_c = SEG_COLOR.get(seg, SLATE)
+    diff = new_score - original_score
+
+    with col_score:
+        with st.container(border=True):
+            st.markdown("<p class='eyebrow'>Priority score</p>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='big-score' style='color:{seg_c}'>{new_score:.0f}"
+                f"<span style='font-size:26px;color:{MUTED}'> / 100</span></div>",
+                unsafe_allow_html=True,
+            )
+            if abs(diff) >= 0.5:
+                arrow = "up" if diff > 0 else "down"
+                st.markdown(
+                    f"<p style='color:{MUTED};font-size:14px'>Was {original_score:.0f} - "
+                    f"your changes move it <b style='color:{seg_c}'>{abs(diff):.0f} points {arrow}</b></p>",
+                    unsafe_allow_html=True,
+                )
+            st.markdown(chip(seg), unsafe_allow_html=True)
+            st.markdown(
+                f"<p style='margin-top:12px;font-size:15px'>{bh.explain_segment(seg)}</p>",
+                unsafe_allow_html=True,
+            )
+            st.metric("Expected win chance", f"{expected_win:.1f}%")
+
+    with col_why:
+        st.write("")
+        st.markdown("<p class='eyebrow'>Why this score</p>", unsafe_allow_html=True)
+        if api_drivers:
+            for d in api_drivers:
+                st.markdown(
+                    f"<div class='finding'>{driver_phrase(str(d))}</div>",
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                f"<p style='color:{MUTED}'>Driver breakdown isn't available for this lead right now.</p>",
+                unsafe_allow_html=True,
+            )
+
+    st.write("")
+    with st.expander("Company record from the Czech business register"):
+        if st.button("Look up the latest registry data"):
+            with st.spinner("Checking the register..."):
+                ares_result = APIClient.score_enrich(str(ico), behavioral_override)
+            if not isinstance(ares_result, dict):
+                st.warning("The register is temporarily unavailable. Try again in a minute.")
+            else:
+                hidden = {"ai_score", "segment", "expected_win_pct",
+                          "p_win_if_converted_pct", "rule_score",
+                          "top_drivers", "version"}
+                shown = {k: v for k, v in ares_result.items() if k not in hidden}
+                if shown:
+                    for k, v in shown.items():
+                        st.write(f"**{k.replace('_', ' ').title()}:** {v}")
+                else:
+                    st.info("The register returned no additional public details for this company.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SCREEN: Radar - what the old playbook misses
+# ══════════════════════════════════════════════════════════════════════════════
+elif nav == "Radar":
+    AVG_DEAL = 500_000  # CZK, same default as the revenue calculator
+
+    days_q = pd.to_numeric(scored_df["Days_Since_Last_Activity__c"],
+                           errors="coerce").fillna(0)
+
+    cooling = scored_df[
+        (scored_df["Segment"] == "High") & days_q.between(7, 30)
+    ].sort_values("Expected_Win_%", ascending=False)
+
+    gems = scored_df[
+        (scored_df["Rule_Score"] < 40) & (scored_df["AI_Score"] >= 70)
+    ].sort_values("AI_Score", ascending=False)
+
+    cooling_value = float((cooling["Expected_Win_%"] / 100).sum()) * AVG_DEAL
+    gems_value    = float((gems["Expected_Win_%"] / 100).sum()) * AVG_DEAL
+
+    st.markdown("<p class='eyebrow'>Radar</p>", unsafe_allow_html=True)
+    st.markdown(
+        "<p class='hero-line'>Two lists the old<br>"
+        "<span class='hl'>playbook never sees.</span></p>",
+        unsafe_allow_html=True,
+    )
+    st.write("")
+
+    # ── Going cold ────────────────────────────────────────────────────────
+    st.markdown(
+        f"<p class='eyebrow' style='color:{AMBER}'>Going cold</p>"
+        f"<p style='font-size:17px;margin:0 0 2px 0'><b>{len(cooling):,} high-priority "
+        f"leads are going quiet</b> - roughly "
+        f"<b style='color:{AMBER}'>{cooling_value/1_000_000:,.1f}M CZK</b> slipping away "
+        "while nobody calls.</p>"
+        f"<p style='color:{MUTED};font-size:13px'>High scores with 7-30 days of silence. "
+        f"Estimated at a {AVG_DEAL/1000:,.0f}k CZK average deal.</p>",
+        unsafe_allow_html=True,
+    )
+
+    if cooling.empty:
+        st.markdown(
+            f"<p style='color:{MUTED}'>Nothing is going cold right now - every "
+            "high-priority lead has been touched in the last week.</p>",
+            unsafe_allow_html=True,
+        )
+    for _, row in cooling.head(4).iterrows():
+        quiet = int(pd.to_numeric(row["Days_Since_Last_Activity__c"], errors="coerce") or 0)
+        with st.container(border=True):
+            st.markdown(
+                f"<div class='q-card'>"
+                f"<div class='q-card-left'>"
+                f"<div style='font-family:Space Grotesk,sans-serif;font-size:28px;"
+                f"font-weight:700;color:{AMBER};line-height:1.05'>{quiet}</div>"
+                f"<div style='font-size:11px;color:{MUTED};font-weight:600;text-transform:uppercase;"
+                f"letter-spacing:.06em'>days<br>quiet</div>"
+                f"</div>"
+                f"<div class='q-card-body'>"
+                f"<div class='q-co'>{row['Company_Name']}</div>"
+                f"<div class='q-meta'>{row['Industry']} · {row['Region']}</div>"
+                f"<div class='q-why' style='border-color:{AMBER}'>Was hot — one call could bring it back.</div>"
+                f"</div>"
+                f"<div class='q-card-right'>"
+                f"<div class='q-score' style='color:{LIME}'>{row['AI_Score']:.0f}</div>"
+                f"<div style='font-size:11px;color:{MUTED};margin-top:4px'>{row['Expected_Win_%']:.0f}% win</div>"
+                f"</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Open profile", key=f"cold_{row['IČO']}",
+                         use_container_width=True):
+                st.session_state["selected_ico"] = row["IČO"]
+                st.session_state["_goto"] = "Lead profile"
+                st.rerun()
+
+    st.write("")
+
+    # ── Hidden gems ───────────────────────────────────────────────────────
+    st.markdown(
+        f"<p class='eyebrow' style='color:{LIME}'>Hidden gems</p>"
+        f"<p style='font-size:17px;margin:0 0 2px 0'><b>{len(gems):,} leads the old rules "
+        f"would have skipped</b> - worth an estimated "
+        f"<b style='color:{LIME}'>{gems_value/1_000_000:,.1f}M CZK</b> the team never "
+        "would have called.</p>"
+        f"<p style='color:{MUTED};font-size:13px'>Scored under 40 by the previous "
+        "rule-based approach, over 70 by the model.</p>",
+        unsafe_allow_html=True,
+    )
+
+    if gems.empty:
+        st.markdown(
+            f"<p style='color:{MUTED}'>No disagreements today - the model and the old "
+            "rules currently agree on who the top leads are.</p>",
+            unsafe_allow_html=True,
+        )
+    for _, row in gems.head(4).iterrows():
+        with st.container(border=True):
+            st.markdown(
+                f"<div class='q-card'>"
+                f"<div class='q-card-left'>"
+                f"<div style='font-family:Space Grotesk,sans-serif;font-weight:700;line-height:1.1'>"
+                f"<div style='font-size:22px;color:{SLATE};text-decoration:line-through'>{row['Rule_Score']:.0f}</div>"
+                f"<div style='font-size:11px;color:{MUTED};margin:-2px 0 2px'>&#8595; model</div>"
+                f"<div style='font-size:30px;color:{LIME}'>{row['AI_Score']:.0f}</div>"
+                f"</div>"
+                f"</div>"
+                f"<div class='q-card-body'>"
+                f"<div class='q-co'>{row['Company_Name']}</div>"
+                f"<div class='q-meta'>{row['Industry']} · {row['Region']}</div>"
+                f"<div class='q-why'>{call_reason(row)}</div>"
+                f"</div>"
+                f"<div class='q-card-right'>"
+                f"<div style='font-size:11px;color:{MUTED};margin-top:8px'>{row['Expected_Win_%']:.0f}% win</div>"
+                f"</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Open profile", key=f"gem_{row['IČO']}",
+                         use_container_width=True):
+                st.session_state["selected_ico"] = row["IČO"]
+                st.session_state["_goto"] = "Lead profile"
+                st.rerun()
+
+    st.markdown(
+        f"<p style='color:{MUTED};font-size:13px;margin-top:10px'>Both lists refresh "
+        "with every scoring run - no one has to remember to check.</p>",
+        unsafe_allow_html=True,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SCREEN: For managers
+# ══════════════════════════════════════════════════════════════════════════════
+elif nav == "For managers":
+    st.markdown("## For managers")
+    st.markdown(
+        f"<p style='color:{MUTED};margin-top:-8px'>Where the pipeline value sits, "
+        "who holds it, and what prioritisation is worth in revenue.</p>",
+        unsafe_allow_html=True,
+    )
+    st.write("")
+
+    # ── Pipeline at a glance ──────────────────────────────────────────────
+    st.markdown("<p class='eyebrow'>Pipeline at a glance</p>", unsafe_allow_html=True)
     total_leads   = len(scored_df)
-    high          = (scored_df["Segment"] == "High").sum()
+    high          = int((scored_df["Segment"] == "High").sum())
     expected_wins = int((scored_df["Expected_Win_%"] / 100).sum())
     avg_score     = scored_df["AI_Score"].mean()
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Total leads",      f"{total_leads:,}")
-    k2.metric("🔥 High potential", f"{high:,}", delta=f"{high/total_leads:.0%} of all leads")
-    k3.metric("Expected wins",    f"{expected_wins:,}")
-    k4.metric("Avg lead quality", f"{avg_score:.1f}/100")
-
-    st.markdown("### What the data says")
+    k1.metric("Total leads", f"{total_leads:,}")
+    k2.metric("High priority", f"{high:,}", delta=f"{high / total_leads:.0%} of pipeline",
+              delta_color="off")
+    k3.metric("Expected wins", f"{expected_wins:,}")
+    k4.metric("Average score", f"{avg_score:.0f} / 100")
 
     if val_df is not None:
-        lift10 = bh.lift_table(val_df["y_true"].values, val_df["ai_proba"].values, bins=10).iloc[0]
+        lift10 = bh.lift_table(val_df["y_true"].values,
+                               val_df["ai_proba"].values, bins=10).iloc[0]
         st.markdown(
-            f"<div class='finding'>📈 <b>Working only the top 10% of leads, your team would catch "
-            f"{lift10['cum_recall']:.0%} of all conversions</b> - that's a "
-            f"<b>{lift10['lift']:.1f}x boost</b> versus working leads in random order.</div>",
-            unsafe_allow_html=True,
-        )
-    if metrics is not None:
-        ai_auc   = metrics["conversion_model"]["test"]["auc_roc"]
-        base_auc = metrics["baseline_conversion"]["auc_roc"]
-        st.markdown(
-            f"<div class='finding'>🧠 <b>The AI ranks leads {(ai_auc-base_auc)*100:.0f} points better "
-            f"than the current rule-based scoring</b> "
-            f"(AI quality {ai_auc:.0%} vs. rules {base_auc:.0%}).</div>",
-            unsafe_allow_html=True,
-        )
-    if importance_df is not None:
-        top3 = (importance_df.head(3)["feature"]
-                .str.replace("__c", "").str.replace("_", " ").tolist())
-        st.markdown(
-            f"<div class='finding'>🔑 <b>Top 3 things that decide if a lead converts:</b> "
-            f"{top3[0]}, {top3[1]}, {top3[2]}.</div>",
+            f"<div class='finding'>Working only the top 10% of leads, the team would catch "
+            f"<b>{lift10['cum_recall']:.0%} of all conversions</b> - "
+            f"<b>{lift10['lift']:.1f}x more</b> than working leads in random order.</div>",
             unsafe_allow_html=True,
         )
 
-    st.markdown("### Lead mix")
     c1, c2 = st.columns(2)
     with c1:
         seg_counts = (scored_df["Segment"].value_counts()
                       .reindex(["High", "Medium", "Low"]).fillna(0))
-        fig = px.pie(values=seg_counts.values, names=seg_counts.index, hole=0.55,
-                     color=seg_counts.index,
-                     color_discrete_map={"High": ENEHANO_GREEN, "Medium": WARN, "Low": DANGER},
-                     title="Lead segments")
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#e0e0e0",
-                          legend=dict(orientation="h", y=-0.05))
-        st.plotly_chart(fig, use_container_width=True)
+        fig = px.pie(values=seg_counts.values, names=seg_counts.index, hole=0.62,
+                     color=seg_counts.index, color_discrete_map=SEG_COLOR,
+                     title="Priority mix")
+        fig.update_layout(legend=dict(orientation="h", y=-0.08))
+        st.plotly_chart(styled(fig, 360), use_container_width=True)
     with c2:
         fig = px.histogram(scored_df, x="AI_Score", nbins=25, color="Segment",
-                           color_discrete_map={"High": ENEHANO_GREEN, "Medium": WARN, "Low": DANGER},
-                           title="AI score distribution")
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                          font_color="#e0e0e0", bargap=0.05,
-                          xaxis_title="Score (0-100)", yaxis_title="Number of leads")
-        st.plotly_chart(fig, use_container_width=True)
+                           color_discrete_map=SEG_COLOR, title="Score distribution")
+        fig.update_layout(bargap=0.06, xaxis_title="Score (0-100)",
+                          yaxis_title="Leads", showlegend=False)
+        st.plotly_chart(styled(fig, 360), use_container_width=True)
 
-    with st.expander("How to read this dashboard (30-second guide)"):
-        st.markdown(
-            "- **Overview** (you are here): headline numbers and what they mean.\n"
-            "- **Business Value**: how much money the AI can earn - input your assumptions.\n"
-            "- **My Leads**: every lead, ranked. Filter, then export to CSV for Salesforce.\n"
-            "- **Top Lead Cards**: flip through the hottest leads, one at a time.\n"
-            "- **Lead Profile**: dive into one company. Try 'what-if' to push the score.\n"
-            "- **Regional Map**: where in Czechia your best leads sit.\n"
-            "- **Model Insights**: how good the AI is, and where to set the 'call' threshold.\n"
-            "- **💬 button (bottom-right)**: ask a question in plain English."
-        )
+    st.divider()
 
-    # Executive PDF export
-    if val_df is not None and metrics is not None:
-        try:
-            import exec_pdf
-            ai_lift_pdf   = bh.lift_table(val_df["y_true"].values, val_df["ai_proba"].values, bins=20)
-            base_lift_pdf = bh.lift_table(val_df["y_true"].values, val_df["baseline_proba"].values, bins=20)
-            roi_pdf = bh.compute_roi(
-                bh.ROIInputs(pipeline_size=10_000, avg_deal_value=500_000,
-                             win_rate_if_converted=0.65, rep_capacity=200,
-                             rep_cost=350_000, ai_top_pct=20),
-                ai_lift_pdf, base_lift_pdf, float(val_df["y_true"].mean()),
+    # ── Where the money sits ──────────────────────────────────────────────
+    st.markdown("<p class='eyebrow'>Where the money sits</p>", unsafe_allow_html=True)
+    AVG_DEAL = 500_000
+    days_q = pd.to_numeric(scored_df["Days_Since_Last_Activity__c"],
+                           errors="coerce").fillna(0)
+    untouched_high = scored_df[(scored_df["Segment"] == "High") & (days_q >= 7)]
+    on_table = float((untouched_high["Expected_Win_%"] / 100).sum()) * AVG_DEAL
+
+    w1, w2 = st.columns([1, 1.6])
+    with w1:
+        with st.container(border=True):
+            st.markdown(
+                f"<div class='h2h'><div class='n' style='color:{AMBER}'>"
+                f"{on_table/1_000_000:,.1f}M</div>"
+                "<div class='l'>CZK sitting in high-priority leads<br>"
+                "untouched for a week or more</div></div>",
+                unsafe_allow_html=True,
             )
-            top5 = scored_df.sort_values("AI_Score", ascending=False).head(5)[
-                ["Company_Name", "Industry", "Region", "AI_Score", "Expected_Win_%"]
-            ]
-            pdf_bytes = exec_pdf.build_pdf(
-                headline_uplift=roi_pdf.uplift_vs_baseline, currency="CZK",
-                ai_auc=metrics["conversion_model"]["test"]["auc_roc"],
-                base_auc=metrics["baseline_conversion"]["auc_roc"],
-                total_leads=total_leads, high_leads=int(high), expected_wins=expected_wins,
-                top_leads=top5,
-                random_rev=roi_pdf.revenue_random,
-                baseline_rev=roi_pdf.revenue_baseline,
-                ai_rev=roi_pdf.revenue_ai,
+            st.markdown(
+                f"<p style='color:{MUTED};font-size:12px;text-align:center'>"
+                f"{len(untouched_high):,} leads · estimated at a "
+                f"{AVG_DEAL/1000:,.0f}k CZK average deal · the rescue list lives in Radar</p>",
+                unsafe_allow_html=True,
             )
-            st.download_button(
-                "📄 Download executive summary (PDF)",
-                data=pdf_bytes,
-                file_name=f"enehano_executive_summary_{pd.Timestamp.now():%Y%m%d}.pdf",
-                mime="application/pdf",
+    with w2:
+        if "Owner" in scored_df.columns:
+            team = (
+                scored_df.groupby("Owner")
+                .agg(leads=("Lead_ID", "count"),
+                     high=("Segment", lambda s: (s == "High").sum()),
+                     expected_wins=("Expected_Win_%", lambda s: (s / 100).sum()))
+                .reset_index()
+                .sort_values("expected_wins", ascending=False)
+                .head(10)
             )
-        except ImportError:
-            pass
+            fig = px.bar(team.sort_values("expected_wins"),
+                         x="expected_wins", y="Owner", orientation="h",
+                         title="Expected wins held per rep - is the gold spread evenly?")
+            fig.update_traces(marker_color=LIME)
+            fig.update_layout(yaxis_title="", xaxis_title="Expected wins in book")
+            st.plotly_chart(styled(fig, 340), use_container_width=True)
+
+    st.divider()
 
 
-# ── TAB: Business Value ───────────────────────────────────────────────────────
-with tab_value:
-    st.subheader("How much is AI lead scoring worth?")
-    st.caption("Plug in your numbers. The dashboard estimates revenue uplift "
-               "from prioritising the AI's top picks vs. random or rule-based work.")
-
+    st.markdown("<p class='eyebrow'>Revenue impact</p>", unsafe_allow_html=True)
     if val_df is None:
-        st.info("Run `python src/train.py` to enable this calculator.")
+        st.info("Validation data isn't available in this build, so the revenue "
+                "calculator is switched off.")
     else:
+        st.markdown(
+            f"<p style='color:{MUTED};font-size:14px'>Plug in your own numbers. "
+            "The model estimates revenue from prioritising its top picks "
+            "against random order and the previous rule-based approach.</p>",
+            unsafe_allow_html=True,
+        )
         c1, c2, c3 = st.columns(3)
         with c1:
-            pipeline_size = st.number_input("Leads per quarter",
-                                            min_value=100, max_value=200_000, value=10_000, step=500)
+            pipeline_size = st.number_input("Leads per quarter", 100, 200_000, 10_000, 500)
             avg_deal = st.number_input("Average deal value (CZK)",
-                                       min_value=10_000, max_value=50_000_000, value=500_000, step=10_000)
-            win_rate = st.slider("Win rate once converted (%)", 10, 95, 65) / 100
+                                       10_000, 50_000_000, 500_000, 10_000)
         with c2:
-            ai_top_pct   = st.slider("Reps work top X% of leads (AI prioritisation)", 5, 100, 20)
-            rep_capacity = st.number_input("Leads each rep handles per quarter",
-                                           min_value=10, max_value=2000, value=200, step=10)
-            rep_cost     = st.number_input("Cost per rep per quarter (CZK)",
-                                           min_value=50_000, max_value=2_000_000, value=350_000, step=10_000)
+            win_rate   = st.slider("Win rate once converted (%)", 10, 95, 65) / 100
+            ai_top_pct = st.slider("Reps work the top X% of leads", 5, 100, 20)
         with c3:
-            st.markdown("**Currency / horizon**")
-            currency   = st.selectbox("Currency label", ["CZK", "EUR", "USD"], index=0)
-            horizon    = st.selectbox("Show numbers as", ["Per quarter", "Per year (x4)"], index=0)
-            multiplier = 4 if horizon.startswith("Per year") else 1
+            rep_capacity = st.number_input("Leads per rep per quarter", 10, 2000, 200, 10)
+            rep_cost     = st.number_input("Cost per rep per quarter (CZK)",
+                                           50_000, 2_000_000, 350_000, 10_000)
 
         ai_lift   = bh.lift_table(val_df["y_true"].values, val_df["ai_proba"].values, bins=20)
         base_lift = bh.lift_table(val_df["y_true"].values, val_df["baseline_proba"].values, bins=20)
@@ -537,491 +1719,244 @@ with tab_value:
             ai_lift, base_lift, base_rate,
         )
 
-        def _fmt(x: float) -> str:
-            return f"{x*multiplier/1_000_000:,.2f}M {currency}"
+        def _m(x: float) -> str:
+            return f"{x / 1_000_000:,.1f}M CZK"
 
-        st.markdown("### Expected revenue under each strategy")
         m1, m2, m3 = st.columns(3)
-        m1.metric("🎲 Random order",      _fmt(r.revenue_random))
-        m2.metric("📋 Rule-based scoring", _fmt(r.revenue_baseline))
-        m3.metric("🧠 AI scoring",         _fmt(r.revenue_ai),
-                  delta=f"+{_fmt(r.uplift_vs_baseline)} vs. rules")
-
-        u1, u2, u3 = st.columns(3)
-        u1.metric("Leads worked",    f"{r.leads_worked:,} / {pipeline_size:,}")
-        u2.metric("Reps required",   f"{r.reps_needed}")
-        u3.metric("Sales-team cost", _fmt(r.reps_cost))
+        m1.metric("Random order", _m(r.revenue_random))
+        m2.metric("Rule-based scoring", _m(r.revenue_baseline))
+        m3.metric("AI scoring", _m(r.revenue_ai),
+                  delta=f"+{_m(r.uplift_vs_baseline)} vs rules")
 
         st.markdown(
-            f"<div class='finding'>💡 At <b>top {ai_top_pct}% prioritisation</b>, AI is expected to generate "
-            f"<b>{_fmt(r.uplift_vs_baseline)}</b> more revenue than the current rule-based approach"
-            f" - that's a <b>{(r.uplift_vs_baseline/max(1,r.revenue_baseline))*100:.0f}% lift</b>.</div>",
+            f"<div class='finding'>At top-{ai_top_pct}% prioritisation, AI scoring is expected "
+            f"to add <b>{_m(r.uplift_vs_baseline)}</b> per quarter over the previous approach - "
+            f"a <b>{(r.uplift_vs_baseline / max(1, r.revenue_baseline)) * 100:.0f}% uplift</b> "
+            f"using {r.reps_needed} reps.</div>",
             unsafe_allow_html=True,
         )
 
-        bar_df = pd.DataFrame({
-            "Strategy": ["Random", "Rule-based", "AI"],
-            "Revenue":  [r.revenue_random*multiplier, r.revenue_baseline*multiplier, r.revenue_ai*multiplier],
-        })
-        fig = px.bar(bar_df, x="Strategy", y="Revenue", color="Strategy",
-                     color_discrete_map={"Random": DANGER, "Rule-based": WARN, "AI": ENEHANO_GREEN},
-                     title=f"Revenue comparison ({horizon.lower()}, {currency})")
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                          font_color="#e0e0e0", showlegend=False, yaxis_title=currency)
-        st.plotly_chart(fig, use_container_width=True)
-
-        with st.expander("Assumptions used in this calculator"):
-            st.markdown(
-                f"- Base conversion rate observed in data: **{base_rate:.1%}**\n"
-                f"- Win-once-converted: **{win_rate:.0%}** (your input)\n"
-                f"- Effective deal value (deal x win): **{avg_deal*win_rate:,.0f} {currency}**\n"
-                "- 'Random' assumes reps pick leads in arbitrary order.\n"
-                "- 'Rule-based' uses the current heuristic scoring (`baseline.py`).\n"
-                "- 'AI' uses the trained model and the top-X% prioritisation slider above."
+        # Executive summary PDF
+        try:
+            import exec_pdf
+            top5 = scored_df.sort_values("AI_Score", ascending=False).head(5)[
+                ["Company_Name", "Industry", "Region", "AI_Score", "Expected_Win_%"]
+            ]
+            pdf_bytes = exec_pdf.build_pdf(
+                headline_uplift=r.uplift_vs_baseline, currency="CZK",
+                ai_auc=metrics["conversion_model"]["test"]["auc_roc"] if metrics else 0,
+                base_auc=metrics["baseline_conversion"]["auc_roc"] if metrics else 0,
+                total_leads=total_leads, high_leads=high, expected_wins=expected_wins,
+                top_leads=top5,
+                random_rev=r.revenue_random, baseline_rev=r.revenue_baseline,
+                ai_rev=r.revenue_ai,
             )
+            _, pdf_col, _ = st.columns([2, 1.8, 2])
+            with pdf_col:
+                st.download_button(
+                    "Download executive summary (PDF)", data=pdf_bytes,
+                    file_name=f"enehano_executive_summary_{pd.Timestamp.now():%Y%m%d}.pdf",
+                    mime="application/pdf", use_container_width=True,
+                )
+        except Exception:
+            pass
 
+    st.divider()
 
-# ── TAB: My Leads ─────────────────────────────────────────────────────────────
-with tab_leads:
-    st.subheader("Your prioritised leads")
-    st.caption("Leads ranked by AI win likelihood. Filter, then export to CSV for Salesforce.")
-
-    f1, f2, f3, f4 = st.columns(4)
-    with f1:
-        seg_f = st.multiselect("Show segments", ["High", "Medium", "Low"], default=["High", "Medium"])
-    with f2:
-        ind_f = st.multiselect("Industry", sorted(scored_df["Industry"].unique()))
-    with f3:
-        src_f = st.multiselect("Lead source", sorted(scored_df["LeadSource"].unique()))
-    with f4:
-        reg_f = st.multiselect("Region", sorted(scored_df["Region"].unique()))
-
-    view = scored_df.copy()
-    if seg_f: view = view[view["Segment"].isin(seg_f)]
-    if ind_f: view = view[view["Industry"].isin(ind_f)]
-    if src_f: view = view[view["LeadSource"].isin(src_f)]
-    if reg_f: view = view[view["Region"].isin(reg_f)]
-    view = view.sort_values("AI_Score", ascending=False)
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Leads in view",    f"{len(view):,}")
-    k2.metric("🔥 High potential", f"{(view['Segment']=='High').sum():,}")
-    k3.metric("Avg AI score",     f"{view['AI_Score'].mean():.1f}" if len(view) else "-")
-    k4.metric("Expected wins",    f"{int((view['Expected_Win_%']/100).sum()):,}")
-
-    display_cols = ["IČO", "Company_Name", "Industry", "Region", "LeadSource",
-                    "AI_Score", "Segment", "Rule_Score", "Expected_Win_%"]
-    selection = st.dataframe(
-        view[display_cols], use_container_width=True, hide_index=True,
-        on_select="rerun", selection_mode="single-row",
-        column_config={
-            "Company_Name":   st.column_config.TextColumn("Company"),
-            "LeadSource":     st.column_config.TextColumn("Source"),
-            "AI_Score":       st.column_config.ProgressColumn("AI Score",   min_value=0, max_value=100, format="%.1f"),
-            "Rule_Score":     st.column_config.ProgressColumn("Rule Score", min_value=0, max_value=100, format="%d"),
-            "Expected_Win_%": st.column_config.NumberColumn("Expected Win %", format="%.1f%%"),
-        },
-    )
-
-    if selection.selection.rows:
-        st.session_state["selected_ico"] = view.iloc[selection.selection.rows[0]]["IČO"]
-        st.toast("Open the 🏢 Lead Profile tab to inspect the selected company.", icon="➡")
-
-    csv_bytes = view[display_cols].to_csv(index=False).encode("utf-8")
-    st.download_button("⬇ Export filtered leads (CSV for Salesforce)",
-                       csv_bytes, file_name="enehano_scored_leads.csv", mime="text/csv")
-
-
-# ── TAB: Top Lead Cards ───────────────────────────────────────────────────────
-with tab_cards:
-    import ui_cards
-    ui_cards.render(scored_df, importance_df, top_n=20)
-
-
-# ── TAB: Lead Profile ─────────────────────────────────────────────────────────
-with tab_profile:
-    raw_input = st.text_input(
-        "Enter IČO (8 digits) or pick a lead in the 🎯 My Leads tab",
-        value=st.session_state.get("selected_ico", ""),
-        max_chars=8,
-    ).strip()
-    ico_input = raw_input.zfill(8) if raw_input else ""
-    matches   = scored_df[scored_df["IČO"] == ico_input] if len(ico_input) == 8 else pd.DataFrame()
-
-    if matches.empty:
-        st.info("Enter a valid 8-digit IČO from the dataset (e.g. select a row in the 🎯 My Leads tab).")
-    else:
-        row = matches.iloc[0]
-        st.title(f"🏢 {row['Company_Name']}")
-        st.caption(
-            f"IČO {row['IČO']} - {row.get('Legal_Form_Label', '-')} - {row['Industry']} - {row['Region']}"
-        )
-
-        # ── What-if Simulator (sidebar) ───────────────────────────────────
-        with st.sidebar:
-            st.markdown("### 🧪 What-if simulator")
-            st.write("Drag the sliders to see how lead behaviour changes the score.")
-            sim_ttfr  = st.slider("Time to first response (h)", 0.1, 72.0,
-                                   float(row["Time_to_First_Response_h__c"]), 0.5)
-            sim_web   = st.slider("Web interactions", 0, 100, int(row["Web_Interactions__c"]))
-            sim_meet  = st.slider("Meetings held",    0, 10,  int(row["Meetings_Held__c"]))
-            sim_forms = st.slider("Form submissions", 0, 10,  int(row["Form_Submissions__c"]))
-            sim_demo  = st.checkbox("Demo requested",  bool(row["Demo_Requested__c"]))
-            sim_li    = st.checkbox("LinkedIn viewed", bool(row["LinkedIn_Viewed__c"]))
-
-        # Build the what-if payload - use /score/enrich so we don't need to
-        # repeat all firmographic fields (ARES fills those on the backend).
-        behavioral_override = {
-            "Time_to_First_Response_h__c": sim_ttfr,
-            "Web_Interactions__c":          sim_web,
-            "Meetings_Held__c":             sim_meet,
-            "Form_Submissions__c":          sim_forms,
-            "Demo_Requested__c":            int(sim_demo),
-            "LinkedIn_Viewed__c":           int(sim_li),
-            # Preserve remaining behavioral fields from the original row
-            "Email_Opens__c":              int(row.get("Email_Opens__c", 0)),
-            "Email_Clicks__c":             int(row.get("Email_Clicks__c", 0)),
-            "Emails_Sent__c":              int(row.get("Emails_Sent__c", 0)),
-            "Email_Open_Rate__c":          float(row.get("Email_Open_Rate__c", 0.0)),
-            "Calls_Made__c":               int(row.get("Calls_Made__c", 0)),
-            "Proposal_Sent__c":            int(row.get("Proposal_Sent__c", 0)),
-            "Content_Downloads__c":        int(row.get("Content_Downloads__c", 0)),
-            "Chatbot_Interactions__c":     int(row.get("Chatbot_Interactions__c", 0)),
-            "Days_Since_Last_Activity__c": int(row.get("Days_Since_Last_Activity__c", 30)),
-            "Days_in_Pipeline__c":         int(row.get("Days_in_Pipeline__c", 30)),
-            "Industry":                    str(row.get("Industry", "Technology")),
-            "Size_Band":                   str(row.get("Size_Band", "Small")),
-            "NumberOfEmployees":           int(row.get("NumberOfEmployees", 25)),
-            "Annual_Revenue_MCZK__c":      float(row.get("Annual_Revenue_MCZK__c", 30.0)),
-            "LeadSource":                  str(row.get("LeadSource", "Web")),
-            "Rating":                      str(row.get("Rating", "Warm")),
-        }
-
-        original_score = float(row["AI_Score"])
-
-        if _api_online:
-            sim_result = APIClient.score_enrich(str(row["IČO"]), behavioral_override)
-        else:
-            sim_result = None
-
-        if sim_result:
-            new_score = float(sim_result["ai_score"])
-            seg, color = segment_label(new_score)
-            expected_win = float(sim_result["expected_win_pct"])
-            rule_score   = sim_result["rule_score"]
-            api_drivers  = sim_result.get("top_drivers", [])
-        else:
-            # Graceful fallback when API is offline
-            new_score    = original_score
-            seg, color   = segment_label(new_score)
-            expected_win = float(row.get("Expected_Win_%", 0))
-            rule_score   = int(row.get("Rule_Score", 0))
-            api_drivers  = list(row.get("top_drivers", []) or [])
-
-        col_score, col_expl = st.columns([1, 1.4], gap="large")
-
-        with col_score:
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            diff      = new_score - original_score
-            diff_html = (
-                f"<span style='font-size:14px;opacity:.8'>was {original_score:.1f}% ({diff:+.1f})</span>"
-            ) if abs(diff) >= 0.05 else ""
-            st.markdown(
-                f"<div class='score-ring' style='border-color:{color};'>"
-                f"AI CONVERSION SCORE<br>"
-                f"<span style='font-size:52px;font-family:Space Grotesk,sans-serif;"
-                f"font-weight:800;color:{color} !important'>{new_score:.1f}%</span><br>"
-                f"<span class='badge' style='background:{color};color:#111 !important;margin-top:8px'>"
-                f"{seg.upper()} POTENTIAL</span><br>{diff_html}</div>",
-                unsafe_allow_html=True,
-            )
-            st.caption(bh.explain_segment(seg))
-            st.metric("Expected win % (Convert x Win)", f"{expected_win:.1f}%")
-            st.metric("Rule-based score (baseline)",    f"{rule_score} / 100")
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with col_expl:
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            st.subheader("Why this score?")
-
-            if api_drivers:
-                st.caption("Top drivers from the API (SHAP explanations):")
-                for driver in api_drivers:
-                    st.markdown(
-                        f"<div style='background:rgba(166,206,57,0.08);"
-                        f"border-left:3px solid {ENEHANO_GREEN};border-radius:6px;"
-                        f"padding:8px 12px;margin:6px 0;font-size:14px'>"
-                        f"✅ <b>{driver}</b></div>",
-                        unsafe_allow_html=True,
-                    )
-            else:
-                st.caption("Start the API server to see SHAP-powered driver explanations.")
-
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        # ARES live enrichment
-        with st.expander("🔎 Live data from ARES (Czech business register)"):
-            if st.button("Fetch ARES data"):
-                with st.spinner("Calling ARES API..."):
-                    # Route ARES calls through the FastAPI backend to avoid
-                    # direct external calls from the frontend process.
-                    ares_result = APIClient.score_enrich(str(row["IČO"]), behavioral_override)
-                if ares_result is None:
-                    st.warning("ARES lookup failed or company not found.")
-                else:
-                    st.success("ARES data retrieved via backend.")
-                    st.json(ares_result)
-
-
-# ── TAB: Regional Map ─────────────────────────────────────────────────────────
-with tab_map:
-    st.subheader("Where are your best leads?")
-    st.caption("AI score and lead volume by Czech region (Kraj).")
-
-    KRAJ_COORDS = {
-        "Praha":              (50.075, 14.437),
-        "Středočeský":        (49.876, 14.789),
-        "Jihočeský":          (49.124, 14.500),
-        "Plzeňský":           (49.747, 13.378),
-        "Karlovarský":        (50.232, 12.871),
-        "Ústecký":            (50.661, 13.832),
-        "Liberecký":          (50.770, 15.058),
-        "Královéhradecký":    (50.342, 15.792),
-        "Pardubický":         (49.945, 16.275),
-        "Kraj Vysočina":      (49.397, 15.589),
-        "Jihomoravský":       (49.195, 16.608),
-        "Olomoucký":          (49.594, 17.250),
-        "Zlínský":            (49.224, 17.666),
-        "Moravskoslezský":    (49.823, 18.262),
-    }
-
-    region_stats = (
-        scored_df.groupby("Region")
-        .agg(
-            leads=("Lead_ID", "count"),
-            avg_score=("AI_Score", "mean"),
-            high_potential=("Segment", lambda s: (s == "High").sum()),
-            expected_wins=("Expected_Win_%", lambda s: (s / 100).sum()),
-        )
-        .reset_index()
-    )
-    region_stats["avg_score"]     = region_stats["avg_score"].round(1)
-    region_stats["expected_wins"] = region_stats["expected_wins"].round(0).astype(int)
-
-    def _match_coord(region_name: str) -> tuple:
-        r = region_name.strip()
-        if r in KRAJ_COORDS:
-            return KRAJ_COORDS[r]
-        stripped = r.replace(" kraj", "").replace("Kraj ", "").strip()
-        for k, v in KRAJ_COORDS.items():
-            if stripped.lower() in k.lower() or k.lower() in stripped.lower():
-                return v
-        return (None, None)
-
-    region_stats["lat"] = region_stats["Region"].map(lambda r: _match_coord(r)[0])
-    region_stats["lon"] = region_stats["Region"].map(lambda r: _match_coord(r)[1])
-    mapped = region_stats.dropna(subset=["lat", "lon"])
-
-    if len(mapped):
-        fig = px.scatter_geo(
-            mapped, lat="lat", lon="lon", size="leads", color="avg_score",
-            hover_name="Region",
-            hover_data={"leads": True, "avg_score": True, "high_potential": True,
-                        "expected_wins": True, "lat": False, "lon": False},
-            color_continuous_scale=[[0, DANGER], [0.5, WARN], [1, ENEHANO_GREEN]],
-            size_max=55, projection="mercator",
-        )
-        fig.update_geos(visible=False, resolution=50,
-                        showcountries=True, countrycolor="#444",
-                        showland=True, landcolor="#1a1f25",
-                        lataxis_range=[48.5, 51.2], lonaxis_range=[12.0, 19.0])
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#e0e0e0",
-                          margin=dict(l=0, r=0, t=10, b=0), height=520,
-                          coloraxis_colorbar=dict(title="Avg score"))
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No region coordinates matched. Check Region values match KRAJ_COORDS keys.")
-
-    c1, c2 = st.columns(2)
-    with c1:
-        top_regions = region_stats.sort_values("avg_score", ascending=False).head(10)
-        fig = px.bar(top_regions, x="avg_score", y="Region", orientation="h",
-                     color="avg_score",
-                     color_continuous_scale=[[0, DANGER], [0.5, WARN], [1, ENEHANO_GREEN]],
-                     title="Top regions by average AI score")
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                          font_color="#e0e0e0", yaxis=dict(autorange="reversed"),
-                          coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
-    with c2:
-        fig = px.bar(region_stats.sort_values("expected_wins", ascending=False).head(10),
-                     x="expected_wins", y="Region", orientation="h",
-                     title="Top regions by expected wins",
-                     color_discrete_sequence=[ENEHANO_GREEN])
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                          font_color="#e0e0e0", yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig, use_container_width=True)
-
-    st.dataframe(
-        region_stats[["Region", "leads", "high_potential", "avg_score", "expected_wins"]]
-        .sort_values("expected_wins", ascending=False),
-        use_container_width=True, hide_index=True,
-        column_config={
-            "leads":          st.column_config.NumberColumn("Leads",          format="%d"),
-            "high_potential": st.column_config.NumberColumn("High potential", format="%d"),
-            "avg_score":      st.column_config.NumberColumn("Avg AI score",   format="%.1f"),
-            "expected_wins":  st.column_config.NumberColumn("Expected wins",  format="%d"),
-        },
-    )
-
-
-# ── TAB: Model Insights ───────────────────────────────────────────────────────
-with tab_insights:
-    st.subheader("How good is the AI?")
-    if val_df is None or metrics is None:
-        st.info("Run `python src/train.py` to enable this tab.")
-    else:
+    # ── Technical validation (off by default - managers don't need it) ────
+    show_tech = st.toggle("Show technical validation (for analysts)", value=False)
+    if show_tech and (val_df is None or metrics is None):
+        st.info("Model diagnostics aren't available in this build.")
+    elif show_tech:
+        st.markdown("<p class='eyebrow'>Model quality</p>", unsafe_allow_html=True)
         y      = val_df["y_true"].values
         p_ai   = val_df["ai_proba"].values
         p_base = val_df["baseline_proba"].values
 
         ai_auc   = bh.auc(y, p_ai)
         base_auc = bh.auc(y, p_base)
-        k1, k2, k3 = st.columns(3)
-        k1.metric("AI ranking quality",        f"{ai_auc:.0%}",
-                  delta=f"+{(ai_auc-base_auc)*100:.0f} pts vs. rules")
-        k2.metric("Rule-based ranking quality", f"{base_auc:.0%}")
-        cv_std = metrics["conversion_model"]["cv"]["auc_std"]
-        stable = "✅ Stable" if cv_std < 0.01 else "⚠ Variable"
-        k3.metric("Result stability (5 retrains)", stable,
-                  delta=f"±{cv_std:.1%} fluctuation", delta_color="off")
+        cv_std   = metrics["conversion_model"]["cv"]["auc_std"]
 
-        st.divider()
-        st.markdown("#### 🎚 Pick the minimum score worth calling")
-        thr = st.slider("Minimum AI score (0-100)", 5, 95, 50, 5)
+        q1, q2, q3 = st.columns(3)
+        q1.metric("AI ranking quality", f"{ai_auc:.0%}",
+                  delta=f"+{(ai_auc - base_auc) * 100:.0f} pts vs rules")
+        q2.metric("Rule-based ranking quality", f"{base_auc:.0%}")
+        q3.metric("Run-to-run consistency",
+                  "Stable" if cv_std < 0.01 else "Variable",
+                  delta=f"±{cv_std:.1%} across 5 retrains", delta_color="off")
+
+        st.markdown("##### Calibrate the call threshold")
+        thr = st.slider("Minimum score worth a call (0-100)", 5, 95, 50, 5)
         ts  = bh.threshold_stats(y, p_ai * 100, thr)
 
         t1, t2, t3, t4 = st.columns(4)
-        t1.metric("Leads to call",     f"{ts.leads_to_work:,}",
+        t1.metric("Leads to call", f"{ts.leads_to_work:,}",
                   delta=f"{ts.leads_to_work_pct:.0%} of all leads", delta_color="off")
         t2.metric("Conversions caught", f"{ts.captured_conversions:,}",
-                  delta=f"{ts.captured_pct:.0%} of all wins",       delta_color="off")
-        t3.metric("Hit rate",          f"{ts.precision:.0%}")
-        t4.metric("Coverage",          f"{ts.recall:.0%}")
+                  delta=f"{ts.captured_pct:.0%} of all wins", delta_color="off")
+        t3.metric("Hit rate", f"{ts.precision:.0%}")
+        t4.metric("Coverage", f"{ts.recall:.0%}")
 
         st.markdown(
-            f"<div class='finding'>👉 At a minimum score of <b>{thr}</b>, your team works "
+            f"<div class='finding'>At a minimum score of <b>{thr}</b>, the team works "
             f"<b>{ts.leads_to_work_pct:.0%}</b> of leads and still catches "
             f"<b>{ts.captured_pct:.0%}</b> of all conversions.</div>",
             unsafe_allow_html=True,
         )
 
-        st.divider()
-        st.markdown("#### 📈 Effort vs. results")
-        lift_ai   = bh.lift_table(y, p_ai,   bins=20)
-        lift_base = bh.lift_table(y, p_base, bins=20)
+        lift_ai_t   = bh.lift_table(y, p_ai, bins=20)
+        lift_base_t = bh.lift_table(y, p_base, bins=20)
         gains = pd.concat([
-            lift_ai.assign(Strategy="AI")[["top_pct", "cum_recall", "Strategy"]],
-            lift_base.assign(Strategy="Rule-based")[["top_pct", "cum_recall", "Strategy"]],
-            pd.DataFrame({"top_pct": [0, 100], "cum_recall": [0, 1.0], "Strategy": ["Random", "Random"]}),
+            lift_ai_t.assign(Strategy="AI")[["top_pct", "cum_recall", "Strategy"]],
+            lift_base_t.assign(Strategy="Rule-based")[["top_pct", "cum_recall", "Strategy"]],
+            pd.DataFrame({"top_pct": [0, 100], "cum_recall": [0, 1.0],
+                          "Strategy": ["Random", "Random"]}),
         ])
-        fig = px.line(gains, x="top_pct", y="cum_recall", color="Strategy", markers=True,
-                      color_discrete_map={"AI": ENEHANO_GREEN, "Rule-based": WARN, "Random": DANGER},
+        fig = px.line(gains, x="top_pct", y="cum_recall", color="Strategy",
+                      color_discrete_map={"AI": LIME, "Rule-based": AMBER, "Random": SLATE},
                       labels={"top_pct": "% of leads worked (best first)",
                               "cum_recall": "% of conversions captured"},
-                      title="Cumulative gain - the higher and earlier, the better")
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                          font_color="#e0e0e0", yaxis_tickformat=".0%", xaxis_ticksuffix="%")
-        st.plotly_chart(fig, use_container_width=True)
+                      title="Effort against results - higher and earlier is better")
+        fig.update_layout(yaxis_tickformat=".0%", xaxis_ticksuffix="%")
+        st.plotly_chart(styled(fig, 420), use_container_width=True)
 
-        st.divider()
-        st.markdown("#### 🛰 Is the AI still on target? (stability check)")
+        if importance_df is not None:
+            st.markdown("##### What signals drive the score")
+            top12 = importance_df.head(12).copy()
+            top12["feature"] = top12["feature"].map(driver_phrase)
+            fig = px.bar(top12.sort_values("importance"), x="importance", y="feature",
+                         orientation="h", title="Strongest signals in the model")
+            fig.update_traces(marker_color=LIME)
+            fig.update_layout(yaxis_title="", xaxis_title="Relative weight")
+            st.plotly_chart(styled(fig, 420), use_container_width=True)
+
+        st.markdown("##### Score stability")
         rng  = np.random.default_rng(42)
         idx  = rng.permutation(len(p_ai))
         half = len(idx) // 2
         ref_scores = p_ai[idx[:half]] * 100
         cur_scores = p_ai[idx[half:]] * 100
+        psi = bh.population_stability_index(ref_scores, cur_scores, bins=10)
 
-        psi              = bh.population_stability_index(ref_scores, cur_scores, bins=10)
-        psi_label, psi_color = bh.psi_verdict(psi)
+        if psi < 0.10:
+            psi_label, psi_color = "Stable", LIME
+        elif psi < 0.25:
+            psi_label, psi_color = "Moderate shift - review", AMBER
+        else:
+            psi_label, psi_color = "Major drift - retrain", RED
 
         d1, d2, d3 = st.columns([1, 1, 2])
-        d1.metric("Stability Index", f"{psi:.3f}")
+        d1.metric("Stability index", f"{psi:.3f}")
         d2.markdown(
-            f"<div style='background:{psi_color}22;border:2px solid {psi_color};"
-            f"padding:14px;border-radius:10px;text-align:center;font-weight:700;"
-            f"color:{psi_color} !important;font-size:18px;margin-top:6px'>{psi_label}</div>",
+            f"<div style='border:1px solid {psi_color};border-radius:8px;"
+            f"padding:14px;text-align:center;font-weight:700;font-size:16px;"
+            f"color:{psi_color};margin-top:4px'>{psi_label}</div>",
             unsafe_allow_html=True,
         )
-        d3.caption(
-            "**Past leads (training):** scores from the data the AI learned on.  \n"
-            "**Recent leads:** scores on the newest batch of leads.  \n"
-            "*(In this demo both come from the same held-out sample.)*"
+        d3.markdown(
+            f"<p style='color:{MUTED};font-size:13px;margin-top:8px'>"
+            "Compares score distributions between past and recent leads. "
+            "A value under 0.10 means the model's behaviour hasn't shifted.</p>",
+            unsafe_allow_html=True,
         )
 
-        drift_df = pd.concat([
-            pd.DataFrame({"Score": ref_scores, "Group": "Past leads (training)"}),
-            pd.DataFrame({"Score": cur_scores, "Group": "Recent leads"}),
-        ])
-        fig = px.histogram(drift_df, x="Score", color="Group", barmode="overlay",
-                           nbins=20, opacity=0.65,
-                           color_discrete_map={"Past leads (training)": ENEHANO_GREEN,
-                                               "Recent leads": "#3498db"},
-                           title="Score distribution: past vs. recent leads")
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                          font_color="#e0e0e0", bargap=0.05,
-                          xaxis_title="AI score (0-100)", yaxis_title="Number of leads",
-                          legend=dict(orientation="h", y=-0.2))
-        st.plotly_chart(fig, use_container_width=True)
+        with st.expander("Where the leads are - regional view"):
+            KRAJ_COORDS = {
+                "Praha": (50.075, 14.437), "Středočeský": (49.876, 14.789),
+                "Jihočeský": (49.124, 14.500), "Plzeňský": (49.747, 13.378),
+                "Karlovarský": (50.232, 12.871), "Ústecký": (50.661, 13.832),
+                "Liberecký": (50.770, 15.058), "Královéhradecký": (50.342, 15.792),
+                "Pardubický": (49.945, 16.275), "Kraj Vysočina": (49.397, 15.589),
+                "Jihomoravský": (49.195, 16.608), "Olomoucký": (49.594, 17.250),
+                "Zlínský": (49.224, 17.666), "Moravskoslezský": (49.823, 18.262),
+            }
+            region_stats = (
+                scored_df.groupby("Region")
+                .agg(leads=("Lead_ID", "count"),
+                     avg_score=("AI_Score", "mean"),
+                     high_potential=("Segment", lambda s: (s == "High").sum()),
+                     expected_wins=("Expected_Win_%", lambda s: (s / 100).sum()))
+                .reset_index()
+            )
+            region_stats["avg_score"]     = region_stats["avg_score"].round(0)
+            region_stats["expected_wins"] = region_stats["expected_wins"].round(0).astype(int)
 
-        with st.expander("📊 Technical curves (ROC & Precision-Recall)"):
+            def _coord(name: str) -> tuple:
+                r = name.strip()
+                if r in KRAJ_COORDS:
+                    return KRAJ_COORDS[r]
+                stripped = r.replace(" kraj", "").replace("Kraj ", "").strip()
+                for k, v in KRAJ_COORDS.items():
+                    if stripped.lower() in k.lower() or k.lower() in stripped.lower():
+                        return v
+                return (None, None)
+
+            region_stats["lat"] = region_stats["Region"].map(lambda x: _coord(x)[0])
+            region_stats["lon"] = region_stats["Region"].map(lambda x: _coord(x)[1])
+            mapped = region_stats.dropna(subset=["lat", "lon"])
+
+            if len(mapped):
+                fig = px.scatter_geo(
+                    mapped, lat="lat", lon="lon", size="leads", color="avg_score",
+                    hover_name="Region",
+                    hover_data={"leads": True, "avg_score": True,
+                                "high_potential": True, "expected_wins": True,
+                                "lat": False, "lon": False},
+                    color_continuous_scale=[[0, SLATE], [0.5, AMBER], [1, LIME]],
+                    size_max=52, projection="mercator",
+                )
+                fig.update_geos(visible=False, resolution=50,
+                                showcountries=True, countrycolor=BORDER,
+                                showland=True, landcolor="#10161d",
+                                lataxis_range=[48.5, 51.2], lonaxis_range=[12.0, 19.0])
+                fig.update_layout(coloraxis_colorbar=dict(title="Avg score"))
+                st.plotly_chart(styled(fig, 480), use_container_width=True)
+
+            st.dataframe(
+                region_stats[["Region", "leads", "high_potential",
+                              "avg_score", "expected_wins"]]
+                .sort_values("expected_wins", ascending=False),
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "leads":          st.column_config.NumberColumn("Leads", format="%d"),
+                    "high_potential": st.column_config.NumberColumn("High priority", format="%d"),
+                    "avg_score":      st.column_config.NumberColumn("Avg score", format="%.0f"),
+                    "expected_wins":  st.column_config.NumberColumn("Expected wins", format="%d"),
+                },
+            )
+
+        with st.expander("Technical curves and raw metrics"):
             roc_a, roc_b = bh.roc_points(y, p_ai), bh.roc_points(y, p_base)
             pr_a,  pr_b  = bh.pr_points(y, p_ai),  bh.pr_points(y, p_base)
             cc1, cc2 = st.columns(2)
             with cc1:
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=roc_a["fpr"], y=roc_a["tpr"],
-                                         name=f"AI (AUC={ai_auc:.3f})",
-                                         line=dict(color=ENEHANO_GREEN, width=3)))
+                                         name=f"AI (AUC {ai_auc:.3f})",
+                                         line=dict(color=LIME, width=3)))
                 fig.add_trace(go.Scatter(x=roc_b["fpr"], y=roc_b["tpr"],
-                                         name=f"Rules (AUC={base_auc:.3f})",
-                                         line=dict(color=WARN, width=2)))
+                                         name=f"Rules (AUC {base_auc:.3f})",
+                                         line=dict(color=AMBER, width=2)))
                 fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], name="Random",
-                                         line=dict(color=DANGER, dash="dash", width=1)))
-                fig.update_layout(title="ROC curve",
-                                  xaxis_title="False positive rate", yaxis_title="True positive rate",
-                                  paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                                  font_color="#e0e0e0", legend=dict(x=0.4, y=0.1))
-                st.plotly_chart(fig, use_container_width=True)
+                                         line=dict(color=SLATE, dash="dash", width=1)))
+                fig.update_layout(title="ROC curve", xaxis_title="False positive rate",
+                                  yaxis_title="True positive rate",
+                                  legend=dict(x=0.45, y=0.08))
+                st.plotly_chart(styled(fig, 380), use_container_width=True)
             with cc2:
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=pr_a["recall"], y=pr_a["precision"],
-                                         name="AI", line=dict(color=ENEHANO_GREEN, width=3)))
+                                         name="AI", line=dict(color=LIME, width=3)))
                 fig.add_trace(go.Scatter(x=pr_b["recall"], y=pr_b["precision"],
-                                         name="Rules", line=dict(color=WARN, width=2)))
-                fig.update_layout(title="Precision-Recall curve",
+                                         name="Rules", line=dict(color=AMBER, width=2)))
+                fig.update_layout(title="Precision against recall",
                                   xaxis_title="Recall", yaxis_title="Precision",
-                                  paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                                  font_color="#e0e0e0", legend=dict(x=0.05, y=0.1))
-                st.plotly_chart(fig, use_container_width=True)
+                                  legend=dict(x=0.05, y=0.08))
+                st.plotly_chart(styled(fig, 380), use_container_width=True)
 
-        if importance_df is not None:
-            st.markdown("#### 🔑 What drives the AI's decisions")
-            top20 = importance_df.head(20).copy()
-            top20["feature"] = top20["feature"].str.replace("__c", "").str.replace("_", " ")
-            fig = px.bar(top20.sort_values("importance"), x="importance", y="feature",
-                         orientation="h", color="importance",
-                         color_continuous_scale=[[0, "#444"], [1, ENEHANO_GREEN]],
-                         title="Top 20 features (Gradient Boosting importance)")
-            fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                              font_color="#e0e0e0", coloraxis_showscale=False, height=520,
-                              yaxis_title="", xaxis_title="Importance")
-            st.plotly_chart(fig, use_container_width=True)
-
-        with st.expander("⚙ For data scientists - raw metrics"):
             conv_t = metrics["conversion_model"]["test"]
             base_c = metrics["baseline_conversion"]
-            comp   = pd.DataFrame({
+            comp = pd.DataFrame({
                 "Metric":     ["AUC-ROC", "PR-AUC", "Precision", "Recall", "F1"],
                 "Rule-based": [base_c["auc_roc"], base_c["pr_auc"],
                                base_c["precision"], base_c["recall"], base_c["f1"]],
@@ -1030,21 +1965,31 @@ with tab_insights:
             })
             comp["Uplift"] = comp["AI"] - comp["Rule-based"]
             st.dataframe(
-                comp.style.format({"Rule-based": "{:.3f}", "AI": "{:.3f}", "Uplift": "{:+.3f}"}),
+                comp.style.format({"Rule-based": "{:.3f}", "AI": "{:.3f}",
+                                   "Uplift": "{:+.3f}"}),
                 use_container_width=True, hide_index=True,
             )
             cv = metrics["conversion_model"]["cv"]
-            st.write(f"**CV AUC (5-fold):** {cv['auc_mean']:.4f} ± {cv['auc_std']:.4f}")
-            st.write(f"**Win model test AUC:** {metrics['win_model']['test']['auc_roc']:.4f}")
-            st.write(
-                f"**Dataset:** {metrics['n_rows']:,} leads, "
-                f"{metrics['n_converted']:,} converted, {metrics['n_won']:,} won."
+            st.caption(
+                f"Cross-validated AUC (5 folds): {cv['auc_mean']:.4f} ± {cv['auc_std']:.4f} · "
+                f"Win model test AUC: {metrics['win_model']['test']['auc_roc']:.4f} · "
+                f"Dataset: {metrics['n_rows']:,} leads, {metrics['n_converted']:,} converted, "
+                f"{metrics['n_won']:,} won."
             )
 
 
-st.divider()
-st.caption("Enehano Solutions - Lead Intelligence - Predictive AI MVP")
+# ── Footer + chat ─────────────────────────────────────────────────────────────
+st.write("")
 
-# Floating chat bubble - always visible, on every tab
+
+st.markdown(
+    f"<p style='text-align:center;color:{MUTED};font-size:12px'>"
+    "Enehano Solutions · Lead Intelligence</p>",
+
+    unsafe_allow_html=True,
+)
+
 import ui_chat
 ui_chat.render_bubble(scored_df)
+
+
