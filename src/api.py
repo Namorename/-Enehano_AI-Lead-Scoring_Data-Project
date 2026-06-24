@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import secrets
 import sys
 from pathlib import Path
 
@@ -44,8 +45,17 @@ import joblib
 import numpy as np
 import pandas as pd
 import shap
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
+from starlette.middleware.base import BaseHTTPMiddleware
+
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from slowapi.util import get_remote_address
+    _SLOWAPI = True
+except ImportError:
+    _SLOWAPI = False
 
 import ares as ares_client
 import baseline
@@ -67,8 +77,10 @@ SCORING_API_KEY = os.getenv("SCORING_API_KEY")
 
 
 def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
-    if SCORING_API_KEY and x_api_key != SCORING_API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid or missing API key.")
+    if SCORING_API_KEY:
+        # secrets.compare_digest prevents timing-oracle attacks on the key value.
+        if x_api_key is None or not secrets.compare_digest(x_api_key, SCORING_API_KEY):
+            raise HTTPException(status_code=401, detail="Invalid or missing API key.")
 
 
 # ── Asset loading ─────────────────────────────────────────────────────────────
@@ -298,31 +310,31 @@ class LeadInput(BaseModel):
     Region_Name:            str   = "Praha"
     Legal_Form_Code:        str   = "112"               # string category, not int
     Legal_Form_Label:       str   = "s.r.o."
-    Founding_Year:          int   = 2010
-    Company_Age_Years:      int   = 15
+    Founding_Year:          int   = Field(default=2010, ge=1800, le=2100)
+    Company_Age_Years:      int   = Field(default=15,   ge=0,    le=300)
     Size_Band:              str   = "Small"
-    NumberOfEmployees:      int   = 25
-    Annual_Revenue_MCZK__c: float = 30.0
+    NumberOfEmployees:      int   = Field(default=25,   ge=0,    le=1_000_000)
+    Annual_Revenue_MCZK__c: float = Field(default=30.0, ge=0.0,  le=1_000_000.0)
     LeadSource:             str   = "Web"
     Rating:                 str   = "Warm"
     Owner:                  str   = "Martin Novák"
     # Behavioral signals (bool flags as int - matches preprocessor)
-    Time_to_First_Response_h__c: float = 24.0
-    Web_Interactions__c:         int   = 0
-    Email_Opens__c:              int   = 0
-    Email_Clicks__c:             int   = 0
-    Emails_Sent__c:              int   = 0
-    Email_Open_Rate__c:          float = 0.0
-    Form_Submissions__c:         int   = 0
-    Demo_Requested__c:           int   = 0    # int, not bool
-    Calls_Made__c:               int   = 0
-    Meetings_Held__c:            int   = 0
-    Proposal_Sent__c:            int   = 0    # int, not bool
-    Content_Downloads__c:        int   = 0
-    Chatbot_Interactions__c:     int   = 0
-    LinkedIn_Viewed__c:          int   = 0    # int, not bool
-    Days_Since_Last_Activity__c: int   = 30
-    Days_in_Pipeline__c:         int   = 30
+    Time_to_First_Response_h__c: float = Field(default=24.0, ge=0.0,  le=8_760.0)
+    Web_Interactions__c:         int   = Field(default=0,    ge=0,    le=100_000)
+    Email_Opens__c:              int   = Field(default=0,    ge=0,    le=100_000)
+    Email_Clicks__c:             int   = Field(default=0,    ge=0,    le=100_000)
+    Emails_Sent__c:              int   = Field(default=0,    ge=0,    le=100_000)
+    Email_Open_Rate__c:          float = Field(default=0.0,  ge=0.0,  le=1.0)
+    Form_Submissions__c:         int   = Field(default=0,    ge=0,    le=10_000)
+    Demo_Requested__c:           int   = Field(default=0,    ge=0,    le=1)     # bool flag
+    Calls_Made__c:               int   = Field(default=0,    ge=0,    le=100_000)
+    Meetings_Held__c:            int   = Field(default=0,    ge=0,    le=10_000)
+    Proposal_Sent__c:            int   = Field(default=0,    ge=0,    le=1)     # bool flag
+    Content_Downloads__c:        int   = Field(default=0,    ge=0,    le=100_000)
+    Chatbot_Interactions__c:     int   = Field(default=0,    ge=0,    le=100_000)
+    LinkedIn_Viewed__c:          int   = Field(default=0,    ge=0,    le=1)     # bool flag
+    Days_Since_Last_Activity__c: int   = Field(default=30,   ge=0,    le=3_650)
+    Days_in_Pipeline__c:         int   = Field(default=30,   ge=0,    le=3_650)
 
     @field_validator("Legal_Form_Code", mode="before")
     @classmethod
@@ -350,29 +362,29 @@ class EnrichLeadInput(BaseModel):
     # Salesforce CRM fields not covered by ARES (all optional with sensible defaults).
     Industry:               str   = "Technology"
     Size_Band:              str   = "Small"
-    NumberOfEmployees:      int   = 25
-    Annual_Revenue_MCZK__c: float = 30.0
+    NumberOfEmployees:      int   = Field(default=25,   ge=0,   le=1_000_000)
+    Annual_Revenue_MCZK__c: float = Field(default=30.0, ge=0.0, le=1_000_000.0)
     LeadSource:             str   = "Web"
     Rating:                 str   = "Warm"
     Owner:                  str   = "Unknown"
 
     # Behavioral / interaction signals (all optional - default to zero activity).
-    Time_to_First_Response_h__c: float = 24.0
-    Web_Interactions__c:         int   = 0
-    Email_Opens__c:              int   = 0
-    Email_Clicks__c:             int   = 0
-    Emails_Sent__c:              int   = 0
-    Email_Open_Rate__c:          float = 0.0
-    Form_Submissions__c:         int   = 0
-    Demo_Requested__c:           int   = 0
-    Calls_Made__c:               int   = 0
-    Meetings_Held__c:            int   = 0
-    Proposal_Sent__c:            int   = 0
-    Content_Downloads__c:        int   = 0
-    Chatbot_Interactions__c:     int   = 0
-    LinkedIn_Viewed__c:          int   = 0
-    Days_Since_Last_Activity__c: int   = 30
-    Days_in_Pipeline__c:         int   = 30
+    Time_to_First_Response_h__c: float = Field(default=24.0, ge=0.0, le=8_760.0)
+    Web_Interactions__c:         int   = Field(default=0,    ge=0,   le=100_000)
+    Email_Opens__c:              int   = Field(default=0,    ge=0,   le=100_000)
+    Email_Clicks__c:             int   = Field(default=0,    ge=0,   le=100_000)
+    Emails_Sent__c:              int   = Field(default=0,    ge=0,   le=100_000)
+    Email_Open_Rate__c:          float = Field(default=0.0,  ge=0.0, le=1.0)
+    Form_Submissions__c:         int   = Field(default=0,    ge=0,   le=10_000)
+    Demo_Requested__c:           int   = Field(default=0,    ge=0,   le=1)
+    Calls_Made__c:               int   = Field(default=0,    ge=0,   le=100_000)
+    Meetings_Held__c:            int   = Field(default=0,    ge=0,   le=10_000)
+    Proposal_Sent__c:            int   = Field(default=0,    ge=0,   le=1)
+    Content_Downloads__c:        int   = Field(default=0,    ge=0,   le=100_000)
+    Chatbot_Interactions__c:     int   = Field(default=0,    ge=0,   le=100_000)
+    LinkedIn_Viewed__c:          int   = Field(default=0,    ge=0,   le=1)
+    Days_Since_Last_Activity__c: int   = Field(default=30,   ge=0,   le=3_650)
+    Days_in_Pipeline__c:         int   = Field(default=30,   ge=0,   le=3_650)
 
 
 class ScoreOutput(BaseModel):
@@ -399,6 +411,36 @@ app = FastAPI(
         "POST /score/enrich for IČO-only enriched scoring."
     ),
 )
+
+
+# ── Security headers middleware ───────────────────────────────────────────────
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+
+app.add_middleware(_SecurityHeadersMiddleware)
+
+
+# ── Rate limiter (slowapi, optional) ─────────────────────────────────────────
+if _SLOWAPI:
+    _limiter = Limiter(key_func=get_remote_address, default_limits=[])
+    app.state.limiter = _limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+def _rate_limit(spec: str):
+    """Return a slowapi decorator when slowapi is installed, else a no-op."""
+    if _SLOWAPI:
+        return _limiter.limit(spec)
+    def _noop(fn):
+        return fn
+    return _noop
 
 
 @app.on_event("startup")
@@ -500,21 +542,25 @@ def health() -> dict:
     }
 
 
-@app.get("/metrics")
-def metrics_endpoint() -> dict:
+@app.get("/metrics", dependencies=[Depends(require_api_key)])
+@_rate_limit("20/minute")
+def metrics_endpoint(request: Request) -> dict:
     if not METRICS:
         raise HTTPException(503, "metrics.json not available - run train.py first.")
     return METRICS
 
 
 @app.post("/score", response_model=ScoreOutput, dependencies=[Depends(require_api_key)])
-def score(lead: LeadInput) -> ScoreOutput:
+@_rate_limit("60/minute")
+def score(request: Request, lead: LeadInput) -> ScoreOutput:
     """Score a single lead using the full LeadInput schema (all fields required)."""
     df = pd.DataFrame([lead.model_dump()])
     return _score_dataframe(df)[0]
 
+
 @app.post("/score/batch", response_model=list[ScoreOutput], dependencies=[Depends(require_api_key)])
-def score_batch(payload: BatchInput) -> list[ScoreOutput]:
+@_rate_limit("10/minute")
+def score_batch(request: Request, payload: BatchInput) -> list[ScoreOutput]:
     """Score up to 500 leads in one call using the full LeadInput schema."""
     if not payload.leads:
         return []
@@ -525,7 +571,8 @@ def score_batch(payload: BatchInput) -> list[ScoreOutput]:
 
 
 @app.post("/score/enrich", response_model=ScoreOutput, dependencies=[Depends(require_api_key)])
-def score_enrich(payload: EnrichLeadInput) -> ScoreOutput:
+@_rate_limit("30/minute")
+def score_enrich(request: Request, payload: EnrichLeadInput) -> ScoreOutput:
     """
     Thick-backend scoring endpoint - the caller supplies only an IČO and
     behavioral metrics; firmographic data is resolved automatically.
@@ -543,18 +590,9 @@ def score_enrich(payload: EnrichLeadInput) -> ScoreOutput:
 
     Raises 502 if the ARES registry is unreachable and the IČO is not cached.
     """
-    # Step 1 & 2: resolve firmographics, using the cache where possible.
     ares_data = _fetch_ares(payload.ico)
-
-    # Step 3: convert raw ARES fields to LeadInput-compatible firmographic dict.
     firmographics = _ares_to_firmographics(ares_data)
-
-    # Step 4: build a complete LeadInput by merging firmographics (from ARES)
-    # with CRM/behavioural fields (from the caller).  We exclude 'ico' from the
-    # payload dump because it is not a LeadInput field.
     behavioral_and_crm = payload.model_dump(exclude={"ico"})
     full_lead = LeadInput(**{**firmographics, **behavioral_and_crm})
-
-    # Step 5: score through the standard pipeline.
     df = pd.DataFrame([full_lead.model_dump()])
     return _score_dataframe(df)[0]
